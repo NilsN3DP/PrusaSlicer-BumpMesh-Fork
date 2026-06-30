@@ -572,6 +572,9 @@ find_package(OpenVDB 5.0 COMPONENTS openvdb)
 if(OpenVDB_FOUND)
     slic3r_remap_configs(IlmBase::Half RelWithDebInfo Release)
     slic3r_remap_configs(Blosc::blosc RelWithDebInfo Release)
+    if(SLIC3R_STATIC AND TARGET OpenVDB::openvdb AND TARGET Blosc::blosc)
+        set_property(TARGET OpenVDB::openvdb APPEND PROPERTY INTERFACE_LINK_LIBRARIES Blosc::blosc)
+    endif ()
 else ()
     message(FATAL_ERROR "OpenVDB could not be found with the bundled find module. "
                    "You can try to specify the find module location of your "

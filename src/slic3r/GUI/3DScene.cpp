@@ -14,11 +14,13 @@
 #include "3DScene.hpp"
 #include "GLShader.hpp"
 #include "GUI_App.hpp"
+#include "GLCanvas3D.hpp"
 #include "Plater.hpp"
 #include "BitmapCache.hpp"
 #include "Camera.hpp"
 #include "wxExtensions.hpp"
 
+#include "Gizmos/GLGizmosManager.hpp"
 #include "Gizmos/GLGizmoMmuSegmentation.hpp"
 
 #include "libslic3r/BuildVolume.hpp"
@@ -797,6 +799,10 @@ void GLVolumeCollection::render(GLVolumeCollection::ERenderType type, bool disab
 
 
 
+    const bool bump_mesh_gizmo_active = GUI::wxGetApp().plater() != nullptr &&
+        GUI::wxGetApp().plater()->canvas3D() != nullptr &&
+        GUI::wxGetApp().plater()->canvas3D()->get_gizmos_manager().get_current_type() == GUI::GLGizmosManager::BumpMesh;
+
     for (GLVolumeWithIdAndZ& volume : to_render) {
         if (!volume.first->is_active)
             continue;
@@ -806,8 +812,8 @@ void GLVolumeCollection::render(GLVolumeCollection::ERenderType type, bool disab
         const Matrix3d view_normal_matrix = view_matrix.linear() * world_matrix_inv_transp;
         const int obj_idx = volume.first->object_idx();
         const int vol_idx = volume.first->volume_idx();
-        const bool render_as_mmu_painted = is_render_as_mmu_painted_enabled && !volume.first->selected &&
-            !volume.first->is_outside && volume.first->hover == GLVolume::HS_None && !volume.first->is_wipe_tower() && obj_idx >= 0 && vol_idx >= 0 &&
+        const bool render_as_mmu_painted = is_render_as_mmu_painted_enabled && (!volume.first->selected || bump_mesh_gizmo_active) &&
+            !volume.first->is_outside && (volume.first->hover == GLVolume::HS_None || bump_mesh_gizmo_active) && !volume.first->is_wipe_tower() && obj_idx >= 0 && vol_idx >= 0 &&
             !model_objects[obj_idx]->volumes[vol_idx]->mm_segmentation_facets.empty() &&
             type != GLVolumeCollection::ERenderType::Transparent; // to filter out shells (not very nice)
         volume.first->set_render_color(true);

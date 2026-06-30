@@ -1,6 +1,8 @@
 Build
 Build.bat
 /build/
+/build-app/
+/release-artifacts/
 MYMETA.json
 MYMETA.yml
 _build

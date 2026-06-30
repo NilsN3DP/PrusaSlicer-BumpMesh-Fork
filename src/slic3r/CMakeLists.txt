@@ -67,6 +67,8 @@ set(SLIC3R_GUI_SOURCES
     GUI/Gizmos/GLGizmosCommon.hpp
     GUI/Gizmos/GLGizmoBase.cpp
     GUI/Gizmos/GLGizmoBase.hpp
+    GUI/Gizmos/GLGizmoBumpMesh.cpp
+    GUI/Gizmos/GLGizmoBumpMesh.hpp
     GUI/Gizmos/GLGizmoSlaBase.cpp
     GUI/Gizmos/GLGizmoSlaBase.hpp	
     GUI/Gizmos/GLGizmoEmboss.cpp

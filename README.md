@@ -1,7 +1,21 @@
 
 ![PrusaSlicer logo](/resources/icons/PrusaSlicer.png?raw=true)
 
-# PrusaSlicer
+# PrusaSlicer Bump Mesh Fork
+
+This is an open-source fork of [PrusaSlicer](https://github.com/prusa3d/PrusaSlicer) that integrates **Bump Mesh** directly into the slicer. It lets you bake displacement textures into a selected model volume without leaving PrusaSlicer, preview the result, optionally assign texture regions to extruders, and keep the generated geometry in the same project.
+
+The Bump Mesh work is inspired by and partially ported from [BumpMesh by CNC Kitchen](https://bumpmesh.com/) / [CNCKitchen/stlTexturizer](https://github.com/CNCKitchen/stlTexturizer) by Stefan Hermann. This fork is not an official Prusa Research or CNC Kitchen release.
+
+Quick links:
+
+* [Bump Mesh user guide](doc/Bump%20Mesh.md)
+* [Fork changes](doc/Bump%20Mesh%20Fork%20Changes.md)
+* [Original PrusaSlicer project](https://github.com/prusa3d/PrusaSlicer)
+* [Original BumpMesh project](https://github.com/CNCKitchen/stlTexturizer)
+* [License](LICENSE)
+
+## Original PrusaSlicer README
 
 You may want to check the [PrusaSlicer project page](https://www.prusa3d.com/prusaslicer/).
 Prebuilt Windows, OSX and Linux binaries are available through the [git releases page](https://github.com/prusa3d/PrusaSlicer/releases) or from the [Prusa3D downloads page](https://www.prusa3d.com/drivers/). There are also [3rd party Linux builds available](https://github.com/prusa3d/PrusaSlicer/wiki/PrusaSlicer-on-Linux---binary-distributions).

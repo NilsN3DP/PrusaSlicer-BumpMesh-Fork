@@ -5,6 +5,7 @@ add_executable(${_TEST_NAME}_tests
     test_line.cpp
     test_point.cpp
 	test_3mf.cpp
+    test_bump_mesh.cpp
 	test_aabbindirect.cpp
 	test_kdtreeindirect.cpp
 	test_arachne.cpp

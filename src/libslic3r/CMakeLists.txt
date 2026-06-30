@@ -48,6 +48,8 @@ set(SLIC3R_SOURCES
     BridgeDetector.hpp
     Brim.cpp
     Brim.hpp
+    BumpMesh.cpp
+    BumpMesh.hpp
     BuildVolume.cpp
     BuildVolume.hpp
     BoostAdapter.hpp

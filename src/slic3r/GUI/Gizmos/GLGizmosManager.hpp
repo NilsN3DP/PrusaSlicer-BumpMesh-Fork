@@ -86,6 +86,7 @@ public:
         Emboss,
         Svg,
         Simplify,
+        BumpMesh,
         Undefined
     };
 

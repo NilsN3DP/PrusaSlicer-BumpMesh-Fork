@@ -1,0 +1,51 @@
+name: Bump Mesh bug report
+description: Report a problem with the Bump Mesh fork feature
+title: "[Bump Mesh] "
+labels: ["bug", "bump-mesh"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for testing the Bump Mesh fork. Please include enough detail to reproduce the problem locally.
+  - type: input
+    id: version
+    attributes:
+      label: Fork build / commit
+      description: Paste the commit hash, release tag, or build date.
+    validations:
+      required: true
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: Describe the actual behavior and what you expected instead.
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      description: List the exact Bump Mesh settings, projection mode, texture, selected sides, and auto-color settings.
+      placeholder: |
+        1. Load model ...
+        2. Select Bump Mesh ...
+        3. Choose texture ...
+        4. Click Apply ...
+    validations:
+      required: true
+  - type: textarea
+    id: files
+    attributes:
+      label: Test files
+      description: Attach a small model, texture, 3MF project, or screenshots if possible.
+  - type: dropdown
+    id: platform
+    attributes:
+      label: Operating system
+      options:
+        - Windows
+        - macOS
+        - Linux
+        - Other
+    validations:
+      required: true

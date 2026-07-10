@@ -7,6 +7,7 @@
 #include <set>
 
 #include <wx/button.h>
+#include <wx/choice.h>
 #include <wx/clrpicker.h>
 #include <wx/colordlg.h>
 #include <wx/bmpbuttn.h>
@@ -481,6 +482,31 @@ void FullSpectrumDialog::build_layout()
     );
     color_row->Add(m_color_swatch, 0, wxALIGN_CENTER_VERTICAL);
     editor_sizer->Add(color_row, 0, wxLEFT | wxRIGHT | wxBOTTOM, pad);
+
+    wxBoxSizer* replace_row = new wxBoxSizer(wxHORIZONTAL);
+    replace_row->Add(
+        new wxStaticText(m_editor_box, wxID_ANY, _L("Replace painted")),
+        0,
+        wxALIGN_CENTER_VERTICAL | wxRIGHT,
+        gap
+    );
+    m_replace_source_choice = new wxChoice(m_editor_box, wxID_ANY);
+    for (unsigned int ext_id = 1; ext_id <= m_num_physical; ++ext_id)
+        m_replace_source_choice->Append(wxString::Format(_L("Extruder %u"), ext_id));
+    if (m_replace_source_choice->GetCount() > 0)
+        m_replace_source_choice->SetSelection(0);
+    m_replace_source_choice->SetToolTip(
+        _L("Choose the existing physical extruder assignment that should become this color mix.")
+    );
+    replace_row->Add(m_replace_source_choice, 1, wxALIGN_CENTER_VERTICAL | wxRIGHT, gap);
+
+    m_btn_replace_source = new wxButton(m_editor_box, wxID_ANY, _L("Use this mix"));
+    m_btn_replace_source->SetToolTip(
+        _L("After pressing OK, all model parts and painted facets using the selected extruder will be reassigned to this color mix.")
+    );
+    m_btn_replace_source->Bind(wxEVT_BUTTON, &FullSpectrumDialog::on_replace_source_clicked, this);
+    replace_row->Add(m_btn_replace_source, 0, wxALIGN_CENTER_VERTICAL);
+    editor_sizer->Add(replace_row, 0, wxLEFT | wxRIGHT | wxBOTTOM | wxEXPAND, pad);
 
     m_permanent_ratio_title = new wxStaticText(m_editor_box, wxID_ANY, _L("Mix ratio"));
     m_permanent_ratio_title->SetFont(wxGetApp().small_font());
@@ -1512,6 +1538,10 @@ void FullSpectrumDialog::update_right_panel_visibility()
         m_right_panel->Layout();
     if (m_right_panel)
         m_right_panel->Refresh();
+    if (m_replace_source_choice)
+        m_replace_source_choice->Enable(has_selection && m_num_physical > 0);
+    if (m_btn_replace_source)
+        m_btn_replace_source->Enable(has_selection && m_num_physical > 0);
 
     if (!has_selection) {
         if (m_editor_title)
@@ -1602,6 +1632,41 @@ void FullSpectrumDialog::on_color_click(wxCommandEvent&)
     const wxColour picked = color_dialog.GetColourData().GetColour();
     ve.color              = wxcolour_to_hex(picked);
     update_preview_and_validation();
+}
+
+void FullSpectrumDialog::on_replace_source_clicked(wxCommandEvent&)
+{
+    const int selection = selected_index();
+    if (selection < 0 || m_replace_source_choice == nullptr)
+        return;
+
+    const int source_idx = m_replace_source_choice->GetSelection();
+    if (source_idx == wxNOT_FOUND)
+        return;
+
+    const unsigned int source_id = static_cast<unsigned int>(source_idx + 1);
+    const unsigned int target_id = m_working_list[size_t(selection)].id;
+    if (source_id == 0 || target_id == 0 || source_id == target_id)
+        return;
+
+    auto it = std::find_if(m_replace_actions.begin(), m_replace_actions.end(), [source_id](const ReplaceAction& action) {
+        return action.source_extruder_id == source_id;
+    });
+    if (it == m_replace_actions.end())
+        m_replace_actions.push_back({source_id, target_id});
+    else
+        it->target_virtual_extruder_id = target_id;
+
+    wxMessageBox(
+        wxString::Format(
+            _L("When you press OK, all existing assignments from Extruder %u will be replaced with virtual extruder %u."),
+            source_id,
+            target_id
+        ),
+        _L("Replace painted extruder"),
+        wxOK | wxICON_INFORMATION,
+        this
+    );
 }
 
 void FullSpectrumDialog::on_add_or_remove_component_clicked(wxCommandEvent&)

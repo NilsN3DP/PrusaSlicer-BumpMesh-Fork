@@ -6,6 +6,7 @@ add_executable(${_TEST_NAME}_tests
     test_point.cpp
 	test_3mf.cpp
     test_bump_mesh.cpp
+    test_full_spectrum_replace.cpp
 	test_aabbindirect.cpp
 	test_kdtreeindirect.cpp
 	test_arachne.cpp

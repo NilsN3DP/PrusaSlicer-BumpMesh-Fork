@@ -16,6 +16,7 @@ class wxBoxSizer;
 class wxWrapSizer;
 class wxScrolledWindow;
 class wxSpinCtrlDouble;
+class wxChoice;
 class StaticBox;
 class Button;
 
@@ -46,6 +47,17 @@ public:
     const std::vector<unsigned int>& removed_ids() const
     {
         return m_removed_ids;
+    }
+
+    struct ReplaceAction
+    {
+        unsigned int source_extruder_id{0};
+        unsigned int target_virtual_extruder_id{0};
+    };
+
+    const std::vector<ReplaceAction>& replace_actions() const
+    {
+        return m_replace_actions;
     }
 
 protected:
@@ -86,6 +98,7 @@ private:
     std::vector<FullSpectrum::VirtualExtruder> m_working_list;
     std::vector<unsigned int> m_original_ids;
     std::vector<unsigned int> m_removed_ids;
+    std::vector<ReplaceAction> m_replace_actions;
 
     VirtualExtruderListBox* m_virtual_extruder_list{nullptr};
     Button* m_btn_add_blend{nullptr};
@@ -97,6 +110,8 @@ private:
     wxString m_editor_description_text;
     bool m_editor_desc_wrap_guard{false};
     wxPanel* m_color_swatch{nullptr};
+    wxChoice* m_replace_source_choice{nullptr};
+    wxButton* m_btn_replace_source{nullptr};
 
     wxBoxSizer* m_rows_sizer{nullptr};
     std::vector<ComponentRow> m_component_rows;
@@ -145,6 +160,7 @@ private:
     void on_add_gradient(wxCommandEvent& event);
     void on_remove_recipe_clicked(wxCommandEvent& event);
     void on_color_click(wxCommandEvent& event);
+    void on_replace_source_clicked(wxCommandEvent& event);
 
     void on_component_changed(wxCommandEvent& event);
     void on_ratio_bar_changed(wxCommandEvent& event);

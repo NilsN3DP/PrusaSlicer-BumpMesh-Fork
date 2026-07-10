@@ -324,6 +324,20 @@ struct FullSpectrumConfig
 FullSpectrumConfig deserialize_virtual_extruders_from_json(const std::string& json_content);
 
 /**
+ * @brief Replace existing object, volume and MMU painting assignments.
+ *
+ * @param model Model whose extruder assignments are remapped in-place.
+ * @param source_extruder_id 1-based source extruder ID.
+ * @param target_extruder_id 1-based target extruder ID, usually a virtual extruder.
+ * @return Number of object configs, volume configs and painted volumes changed.
+ */
+size_t replace_model_extruder(
+    Model& model,
+    unsigned int source_extruder_id,
+    unsigned int target_extruder_id
+);
+
+/**
  * @brief Remap virtual extruder IDs and mm-painting data on 3MF import.
  *
  * Shifts colliding virtual IDs above the target physical range,

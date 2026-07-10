@@ -1068,6 +1068,56 @@ FullSpectrumConfig deserialize_virtual_extruders_from_json(
     return result;
 }
 
+size_t replace_model_extruder(
+    Model& model,
+    unsigned int source_extruder_id,
+    unsigned int target_extruder_id
+)
+{
+    if (source_extruder_id == 0 || target_extruder_id == 0 || source_extruder_id == target_extruder_id)
+        return 0;
+
+    size_t changed = 0;
+    const auto source_state = static_cast<TriangleStateType>(source_extruder_id);
+    const auto target_state = static_cast<TriangleStateType>(target_extruder_id);
+    const std::map<TriangleStateType, TriangleStateType> state_remap{{source_state, target_state}};
+
+    for (ModelObject* object : model.objects) {
+        if (object == nullptr)
+            continue;
+
+        if (object->config.has("extruder") && object->config.extruder() == int(source_extruder_id)) {
+            object->config.set("extruder", int(target_extruder_id));
+            ++changed;
+        }
+
+        for (ModelVolume* volume : object->volumes) {
+            if (volume == nullptr)
+                continue;
+
+            if (volume->config.has("extruder") && volume->config.extruder() == int(source_extruder_id)) {
+                volume->config.set("extruder", int(target_extruder_id));
+                ++changed;
+            }
+
+            if (!volume->is_mm_painted())
+                continue;
+
+            const std::vector<bool>& used = volume->mm_segmentation_facets.get_data().used_states;
+            if (source_extruder_id >= used.size() || !used[source_extruder_id])
+                continue;
+
+            TriangleSelector selector(volume->mesh());
+            selector.deserialize(volume->mm_segmentation_facets.get_data(), false);
+            selector.remap_states(state_remap);
+            if (volume->mm_segmentation_facets.set(selector))
+                ++changed;
+        }
+    }
+
+    return changed;
+}
+
 /**
  * @brief Compute a remap table {old_id -> new_id} for virtual extruder IDs
  *        that collide with physical extruder slots on the target printer.

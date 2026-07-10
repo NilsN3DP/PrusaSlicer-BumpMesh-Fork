@@ -534,7 +534,23 @@ Sidebar::Sidebar(Plater *parent)
         model.virtual_extruders = FullSpectrum::normalize_virtual_extruders(
             dialog.result_virtual_extruders());
 
+        std::vector<unsigned int> ids_before_renumber;
+        ids_before_renumber.reserve(model.virtual_extruders.size());
+        for (const FullSpectrum::VirtualExtruder& ve : model.virtual_extruders)
+            ids_before_renumber.push_back(ve.id);
+
         renumber_virtual_extruders(*m_plater, static_cast<unsigned int>(m_combos_filament.size()));
+
+        std::map<unsigned int, unsigned int> final_virtual_ids;
+        for (size_t i = 0; i < std::min(ids_before_renumber.size(), model.virtual_extruders.size()); ++i)
+            final_virtual_ids[ids_before_renumber[i]] = model.virtual_extruders[i].id;
+
+        for (const FullSpectrumDialog::ReplaceAction& action : dialog.replace_actions()) {
+            const auto target_it = final_virtual_ids.find(action.target_virtual_extruder_id);
+            const unsigned int target_id = target_it == final_virtual_ids.end() ?
+                action.target_virtual_extruder_id : target_it->second;
+            FullSpectrum::replace_model_extruder(model, action.source_extruder_id, target_id);
+        }
 
         for (size_t obj_idx = 0; obj_idx < model.objects.size(); ++obj_idx)
             m_object_list->update_info_items(obj_idx);

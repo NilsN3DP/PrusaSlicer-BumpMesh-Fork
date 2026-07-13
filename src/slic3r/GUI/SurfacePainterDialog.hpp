@@ -16,6 +16,7 @@ class wxChoice;
 class wxListBox;
 class wxPanel;
 class wxSpinCtrl;
+class wxSpinCtrlDouble;
 class wxStaticBitmap;
 class wxStaticText;
 
@@ -74,6 +75,10 @@ private:
     wxChoice* m_projection_choice{nullptr};
     wxChoice* m_target_choice{nullptr};
     wxSpinCtrl* m_palette_size{nullptr};
+    wxSpinCtrlDouble* m_scale_u{nullptr};
+    wxSpinCtrlDouble* m_scale_v{nullptr};
+    wxSpinCtrlDouble* m_offset_u{nullptr};
+    wxSpinCtrlDouble* m_offset_v{nullptr};
     wxListBox* m_palette_list{nullptr};
     wxStaticText* m_result_label{nullptr};
     wxButton* m_apply_button{nullptr};

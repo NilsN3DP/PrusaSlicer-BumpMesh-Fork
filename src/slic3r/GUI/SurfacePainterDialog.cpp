@@ -62,6 +62,81 @@ struct Bucket
     size_t b = 0;
 };
 
+struct RefinedMesh
+{
+    indexed_triangle_set mesh;
+    size_t subdivisions = 1;
+};
+
+size_t subdivision_factor_for(const indexed_triangle_set& mesh, const SurfacePainter::Bitmap& bitmap)
+{
+    if (mesh.indices.empty())
+        return 1;
+
+    const size_t max_facets = 160000;
+    const size_t image_hint = std::max<size_t>(1, std::min<size_t>(32, std::max(bitmap.width, bitmap.height) / 32));
+    const size_t budget_hint = std::max<size_t>(1, static_cast<size_t>(std::sqrt(double(max_facets) / double(mesh.indices.size()))));
+    return std::clamp(std::min(image_hint, budget_hint), size_t(1), size_t(16));
+}
+
+int add_vertex(indexed_triangle_set& out, const Vec3f& vertex)
+{
+    out.vertices.push_back(vertex);
+    return int(out.vertices.size() - 1);
+}
+
+RefinedMesh refine_mesh_for_surface_painting(const indexed_triangle_set& input, const SurfacePainter::Bitmap& bitmap)
+{
+    RefinedMesh refined;
+    refined.subdivisions = subdivision_factor_for(input, bitmap);
+    if (refined.subdivisions <= 1) {
+        refined.mesh = input;
+        return refined;
+    }
+
+    const int n = int(refined.subdivisions);
+    const size_t verts_per_triangle = size_t((n + 1) * (n + 2) / 2);
+    refined.mesh.vertices.reserve(input.indices.size() * verts_per_triangle);
+    refined.mesh.indices.reserve(input.indices.size() * size_t(n) * size_t(n));
+
+    for (const stl_triangle_vertex_indices& face : input.indices) {
+        const Vec3f a = input.vertices[face[0]];
+        const Vec3f b = input.vertices[face[1]];
+        const Vec3f c = input.vertices[face[2]];
+
+        std::vector<int> grid(verts_per_triangle, -1);
+        auto grid_offset = [n](int i, int j) {
+            return i * (n + 1) - (i * (i - 1)) / 2 + j;
+        };
+
+        for (int i = 0; i <= n; ++i) {
+            for (int j = 0; j <= n - i; ++j) {
+                const float wa = float(n - i - j) / float(n);
+                const float wb = float(i) / float(n);
+                const float wc = float(j) / float(n);
+                grid[grid_offset(i, j)] = add_vertex(refined.mesh, wa * a + wb * b + wc * c);
+            }
+        }
+
+        for (int i = 0; i < n; ++i) {
+            for (int j = 0; j < n - i; ++j) {
+                const int v00 = grid[grid_offset(i, j)];
+                const int v10 = grid[grid_offset(i + 1, j)];
+                const int v01 = grid[grid_offset(i, j + 1)];
+                refined.mesh.indices.emplace_back(v00, v10, v01);
+                if (j < n - i - 1) {
+                    const int v11 = grid[grid_offset(i + 1, j + 1)];
+                    refined.mesh.indices.emplace_back(v10, v11, v01);
+                }
+            }
+        }
+    }
+
+    its_merge_vertices(refined.mesh);
+    its_compactify_vertices(refined.mesh);
+    return refined;
+}
+
 } // namespace
 
 SurfacePainterDialog::SurfacePainterDialog(
@@ -167,6 +242,25 @@ void SurfacePainterDialog::build_layout()
     m_palette_size->Bind(wxEVT_SPINCTRL, &SurfacePainterDialog::on_controls_changed, this);
     settings->Add(m_palette_size, 0);
     root->Add(settings, 0, wxEXPAND | wxLEFT | wxRIGHT | wxBOTTOM, 12);
+
+    auto* transform = new wxBoxSizer(wxHORIZONTAL);
+    auto add_transform_spin = [this, transform](const wxString& label, double value, double min_value, double max_value) {
+        transform->Add(new wxStaticText(this, wxID_ANY, label), 0, wxALIGN_CENTER_VERTICAL | wxRIGHT, 6);
+        auto* spin = new wxSpinCtrlDouble(this, wxID_ANY);
+        spin->SetRange(min_value, max_value);
+        spin->SetDigits(2);
+        spin->SetIncrement(0.05);
+        spin->SetValue(value);
+        spin->Bind(wxEVT_SPINCTRLDOUBLE, &SurfacePainterDialog::on_controls_changed, this);
+        spin->Bind(wxEVT_TEXT, &SurfacePainterDialog::on_controls_changed, this);
+        transform->Add(spin, 0, wxRIGHT, 14);
+        return spin;
+    };
+    m_scale_u = add_transform_spin(_L("Scale U"), 1.0, 0.05, 10.0);
+    m_scale_v = add_transform_spin(_L("Scale V"), 1.0, 0.05, 10.0);
+    m_offset_u = add_transform_spin(_L("Position U"), 0.0, -10.0, 10.0);
+    m_offset_v = add_transform_spin(_L("Position V"), 0.0, -10.0, 10.0);
+    root->Add(transform, 0, wxEXPAND | wxLEFT | wxRIGHT | wxBOTTOM, 12);
 
     auto* body = new wxBoxSizer(wxHORIZONTAL);
     m_preview = new wxStaticBitmap(this, wxID_ANY, wxBitmap(300, 220));
@@ -431,6 +525,10 @@ SurfacePainter::ProjectionSettings SurfacePainterDialog::projection_settings() c
     projection.size = Vec3d(100.0, 100.0, 100.0);
     projection.cylinder_center = Vec3d(50.0, 50.0, 0.0);
     projection.cylinder_radius = 50.0;
+    projection.scale_u = m_scale_u ? m_scale_u->GetValue() : 1.0;
+    projection.scale_v = m_scale_v ? m_scale_v->GetValue() : 1.0;
+    projection.offset_u = m_offset_u ? m_offset_u->GetValue() : 0.0;
+    projection.offset_v = m_offset_v ? m_offset_v->GetValue() : 0.0;
     projection.clamp = true;
 
     switch (m_projection_choice ? m_projection_choice->GetSelection() : 0) {
@@ -541,6 +639,13 @@ size_t SurfacePainterDialog::apply_to_volume(ModelVolume& volume) const
 {
     if (!m_bitmap.valid() || m_palette.empty() || volume.mesh().empty())
         return 0;
+
+    RefinedMesh refined = refine_mesh_for_surface_painting(volume.mesh().its, m_bitmap);
+    if (refined.subdivisions > 1) {
+        volume.set_mesh(std::move(refined.mesh));
+        volume.calculate_convex_hull();
+        volume.set_new_unique_id();
+    }
 
     std::vector<SurfacePainter::PaintedSample> painted = SurfacePainter::paint_surface_points(
         make_volume_points(volume),

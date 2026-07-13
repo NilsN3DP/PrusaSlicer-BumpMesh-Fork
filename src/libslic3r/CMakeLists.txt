@@ -101,6 +101,8 @@ set(SLIC3R_SOURCES
     Feature/FuzzySkin/FuzzySkin.hpp
     Feature/FullSpectrum/VirtualExtruder.cpp
     Feature/FullSpectrum/VirtualExtruder.hpp
+    Feature/SurfacePainter/SurfacePainter.cpp
+    Feature/SurfacePainter/SurfacePainter.hpp
     Fill/Fill.cpp
     Fill/Fill3DHoneycomb.cpp
     Fill/Fill3DHoneycomb.hpp

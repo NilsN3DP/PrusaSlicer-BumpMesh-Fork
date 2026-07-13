@@ -1735,6 +1735,7 @@ void MainFrame::init_menubar_as_editor()
                 for (size_t object_idx = 0; object_idx < model.objects.size(); ++object_idx) {
                     ModelObject* object = model.objects[object_idx];
                     if (std::find(object->volumes.begin(), object->volumes.end(), selected_volume) != object->volumes.end()) {
+                        object->invalidate_bounding_box();
                         wxGetApp().obj_list()->update_info_items(object_idx);
                         break;
                     }

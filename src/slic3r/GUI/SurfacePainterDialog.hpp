@@ -13,6 +13,7 @@
 
 #include <functional>
 #include <optional>
+#include <chrono>
 #include <vector>
 
 class wxButton;
@@ -93,7 +94,9 @@ private:
     bool m_canvas_events_bound = false;
     bool m_dragging_placement = false;
     bool m_rotating_placement = false;
+    bool m_fast_preview = false;
     wxPoint m_last_mouse_position;
+    std::chrono::steady_clock::time_point m_last_drag_preview_time;
     unsigned int m_num_physical = 0;
     std::vector<std::string> m_physical_colors;
 
@@ -146,8 +149,8 @@ private:
     std::vector<SurfacePainter::SurfacePoint> make_probe_points() const;
     std::vector<SurfacePainter::SurfacePoint> make_volume_points(const indexed_triangle_set& mesh) const;
     int detail_level() const;
-    void apply_preview_if_enabled();
-    void refresh_after_transform_change();
+    void apply_preview_if_enabled(bool force = false);
+    void refresh_after_transform_change(bool force = false);
     void bind_canvas_events();
     void unbind_canvas_events();
     void set_spin_value_clamped(wxSpinCtrlDouble* spin, double value);

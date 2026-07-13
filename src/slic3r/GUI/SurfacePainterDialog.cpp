@@ -29,6 +29,7 @@
 #include <cmath>
 #include <cstdio>
 #include <functional>
+#include <limits>
 #include <map>
 
 namespace Slic3r::GUI {
@@ -42,6 +43,55 @@ wxColour window_bg_color()
 wxString color_to_label(const SurfacePainter::ColorRGBA& color)
 {
     return wxString::Format("#%02X%02X%02X", color.r, color.g, color.b);
+}
+
+struct NamedColor
+{
+    const char* name;
+    SurfacePainter::ColorRGBA color;
+};
+
+int color_distance_sq(const SurfacePainter::ColorRGBA& a, const SurfacePainter::ColorRGBA& b)
+{
+    const int dr = int(a.r) - int(b.r);
+    const int dg = int(a.g) - int(b.g);
+    const int db = int(a.b) - int(b.b);
+    return dr * dr + dg * dg + db * db;
+}
+
+const char* color_name(const SurfacePainter::ColorRGBA& color)
+{
+    static constexpr std::array<NamedColor, 18> named_colors{{
+        {"black", {0, 0, 0, 255}},
+        {"white", {255, 255, 255, 255}},
+        {"gray", {128, 128, 128, 255}},
+        {"red", {255, 0, 0, 255}},
+        {"orange", {255, 128, 0, 255}},
+        {"yellow", {255, 255, 0, 255}},
+        {"green", {0, 180, 0, 255}},
+        {"lime", {128, 255, 0, 255}},
+        {"cyan", {0, 255, 255, 255}},
+        {"blue", {0, 0, 255, 255}},
+        {"navy", {0, 0, 128, 255}},
+        {"purple", {128, 0, 255, 255}},
+        {"magenta", {255, 0, 255, 255}},
+        {"pink", {255, 128, 192, 255}},
+        {"brown", {128, 64, 0, 255}},
+        {"beige", {210, 190, 150, 255}},
+        {"silver", {192, 192, 192, 255}},
+        {"gold", {255, 190, 0, 255}},
+    }};
+
+    int best_distance = std::numeric_limits<int>::max();
+    const char* best_name = "unknown";
+    for (const NamedColor& named_color : named_colors) {
+        const int distance = color_distance_sq(color, named_color.color);
+        if (distance < best_distance) {
+            best_distance = distance;
+            best_name = named_color.name;
+        }
+    }
+    return best_name;
 }
 
 std::string color_to_hex(const SurfacePainter::ColorRGBA& color)
@@ -438,6 +488,7 @@ void SurfacePainterDialog::on_canvas_mouse(wxMouseEvent& event)
         m_dragging_placement = true;
         m_rotating_placement = false;
         m_last_mouse_position = event.GetPosition();
+        m_last_drag_preview_time = std::chrono::steady_clock::time_point{};
         if (event_window != nullptr && !event_window->HasCapture())
             event_window->CaptureMouse();
         return;
@@ -447,6 +498,7 @@ void SurfacePainterDialog::on_canvas_mouse(wxMouseEvent& event)
         m_rotating_placement = true;
         m_dragging_placement = false;
         m_last_mouse_position = event.GetPosition();
+        m_last_drag_preview_time = std::chrono::steady_clock::time_point{};
         if (event_window != nullptr && !event_window->HasCapture())
             event_window->CaptureMouse();
         return;
@@ -456,6 +508,7 @@ void SurfacePainterDialog::on_canvas_mouse(wxMouseEvent& event)
         m_dragging_placement = false;
         if (event_window != nullptr && event_window->HasCapture())
             event_window->ReleaseMouse();
+        refresh_after_transform_change(true);
         return;
     }
 
@@ -463,6 +516,7 @@ void SurfacePainterDialog::on_canvas_mouse(wxMouseEvent& event)
         m_rotating_placement = false;
         if (event_window != nullptr && event_window->HasCapture())
             event_window->ReleaseMouse();
+        refresh_after_transform_change(true);
         return;
     }
 
@@ -646,8 +700,9 @@ void SurfacePainterDialog::refresh_result_ui()
             ? wxString::Format(_L("VE %u"), entry.target.id)
             : wxString::Format(_L("E%u"), entry.target.id);
         m_palette_list->Append(wxString::Format(
-            "%s  ->  %s    image %zu    probe %zu",
+            "%s %s  ->  %s    image %zu    probe %zu",
             color_to_label(entry.color),
+            wxString::FromUTF8(color_name(entry.color)),
             target,
             entry.count,
             sample_counts[i]
@@ -863,28 +918,44 @@ void SurfacePainterDialog::restore_target_volume()
 
 int SurfacePainterDialog::detail_level() const
 {
-    return m_detail_level != nullptr ? std::clamp(m_detail_level->GetValue(), 1, 16) : 6;
+    const int detail = m_detail_level != nullptr ? std::clamp(m_detail_level->GetValue(), 1, 16) : 6;
+    return m_fast_preview ? std::min(detail, 2) : detail;
 }
 
-void SurfacePainterDialog::apply_preview_if_enabled()
+void SurfacePainterDialog::apply_preview_if_enabled(bool force)
 {
     const bool live_preview = m_live_preview != nullptr && m_live_preview->GetValue();
     const bool mouse_preview = m_mouse_placement != nullptr && m_mouse_placement->GetValue();
-    if (!live_preview && !mouse_preview)
+    if (!force && !live_preview && !mouse_preview)
         return;
 
     wxCommandEvent event;
     on_preview(event);
 }
 
-void SurfacePainterDialog::refresh_after_transform_change()
+void SurfacePainterDialog::refresh_after_transform_change(bool force)
 {
     if (!m_bitmap.valid())
         return;
 
+    const bool interactive_drag = m_dragging_placement || m_rotating_placement;
+    if (interactive_drag && !force) {
+        const auto now = std::chrono::steady_clock::now();
+        if (m_last_drag_preview_time.time_since_epoch().count() != 0 &&
+            now - m_last_drag_preview_time < std::chrono::milliseconds(80))
+            return;
+
+        m_last_drag_preview_time = now;
+        m_fast_preview = true;
+        apply_preview_if_enabled(true);
+        m_fast_preview = false;
+        return;
+    }
+
     run_projection_probe();
     refresh_result_ui();
-    apply_preview_if_enabled();
+    m_fast_preview = false;
+    apply_preview_if_enabled(force);
 }
 
 void SurfacePainterDialog::bind_canvas_events()

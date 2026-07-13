@@ -347,14 +347,23 @@ void SurfacePainterDialog::build_layout()
         transform->Add(spin, 0, wxRIGHT, 14);
         return spin;
     };
-    m_scale_u = add_transform_spin(_L("Scale U"), 1.0, 0.05, 10.0);
-    m_scale_v = add_transform_spin(_L("Scale V"), 1.0, 0.05, 10.0);
-    m_offset_u = add_transform_spin(_L("Position U"), 0.0, -10.0, 10.0);
-    m_offset_v = add_transform_spin(_L("Position V"), 0.0, -10.0, 10.0);
+    m_scale_u = add_transform_spin(_L("Scale U"), 0.45, 0.02, 10.0);
+    m_scale_v = add_transform_spin(_L("Scale V"), 0.45, 0.02, 10.0);
+    m_offset_u = add_transform_spin(_L("Position U"), 0.275, -10.0, 10.0);
+    m_offset_v = add_transform_spin(_L("Position V"), 0.275, -10.0, 10.0);
     m_rotation_degrees = add_transform_spin(_L("Rotation"), 0.0, -180.0, 180.0, 1.0, 1);
     m_repeat_image = new wxCheckBox(this, wxID_ANY, _L("Repeat image"));
     m_repeat_image->Bind(wxEVT_CHECKBOX, &SurfacePainterDialog::on_controls_changed, this);
-    transform->Add(m_repeat_image, 0, wxALIGN_CENTER_VERTICAL);
+    transform->Add(m_repeat_image, 0, wxALIGN_CENTER_VERTICAL | wxRIGHT, 14);
+    auto* fit_btn = new wxButton(this, wxID_ANY, _L("Fit"));
+    fit_btn->Bind(wxEVT_BUTTON, &SurfacePainterDialog::on_fit_image, this);
+    transform->Add(fit_btn, 0, wxRIGHT, 6);
+    auto* center_btn = new wxButton(this, wxID_ANY, _L("Center"));
+    center_btn->Bind(wxEVT_BUTTON, &SurfacePainterDialog::on_center_image, this);
+    transform->Add(center_btn, 0, wxRIGHT, 6);
+    auto* reset_btn = new wxButton(this, wxID_ANY, _L("Reset"));
+    reset_btn->Bind(wxEVT_BUTTON, &SurfacePainterDialog::on_reset_transform, this);
+    transform->Add(reset_btn, 0);
     root->Add(transform, 0, wxEXPAND | wxLEFT | wxRIGHT | wxBOTTOM, 12);
 
     auto* preview_row = new wxBoxSizer(wxHORIZONTAL);
@@ -369,6 +378,7 @@ void SurfacePainterDialog::build_layout()
     m_mouse_placement = new wxCheckBox(this, wxID_ANY, _L("Mouse placement"));
     m_mouse_placement->Bind(wxEVT_CHECKBOX, &SurfacePainterDialog::on_controls_changed, this);
     m_mouse_placement->Enable(m_target_volume != nullptr && m_canvas != nullptr);
+    m_mouse_placement->SetValue(m_target_volume != nullptr && m_canvas != nullptr);
     preview_row->Add(m_mouse_placement, 0, wxALIGN_CENTER_VERTICAL);
     root->Add(preview_row, 0, wxEXPAND | wxLEFT | wxRIGHT | wxBOTTOM, 12);
 
@@ -433,6 +443,7 @@ void SurfacePainterDialog::on_load_image(wxCommandEvent&)
             m_target_choice->SetSelection(1);
     }
 
+    fit_image_to_decal();
     rebuild_preview();
     rebuild_palette();
     run_projection_probe();
@@ -457,6 +468,7 @@ void SurfacePainterDialog::on_preview(wxCommandEvent&)
 
     ensure_preview_virtual_extruders();
     const size_t painted = apply_to_volume(*m_target_volume, m_original_mesh ? &*m_original_mesh : nullptr);
+    m_last_painted_facets = painted;
     m_preview_was_applied = true;
     if (m_preview_callback)
         m_preview_callback(painted);
@@ -466,8 +478,7 @@ void SurfacePainterDialog::on_apply(wxCommandEvent&)
 {
     m_create_virtual_extruders = target_kind() == SurfacePainter::AssignmentKind::VirtualExtruder
         && !m_generated_virtual_extruders.empty();
-    if (!m_create_virtual_extruders)
-        restore_preview_virtual_extruders();
+    restore_preview_virtual_extruders();
 
     if (m_apply_callback) {
         if (m_apply_callback(*this)) {
@@ -484,9 +495,29 @@ void SurfacePainterDialog::on_apply(wxCommandEvent&)
         Close();
 }
 
+void SurfacePainterDialog::on_fit_image(wxCommandEvent&)
+{
+    fit_image_to_decal();
+    refresh_after_transform_change(true);
+}
+
+void SurfacePainterDialog::on_center_image(wxCommandEvent&)
+{
+    center_image_in_decal();
+    refresh_after_transform_change(true);
+}
+
+void SurfacePainterDialog::on_reset_transform(wxCommandEvent&)
+{
+    if (m_repeat_image != nullptr)
+        m_repeat_image->SetValue(false);
+    fit_image_to_decal();
+    refresh_after_transform_change(true);
+}
+
 void SurfacePainterDialog::on_canvas_mouse(wxMouseEvent& event)
 {
-    if (m_mouse_placement == nullptr || !m_mouse_placement->GetValue() || !IsShown()) {
+    if (m_mouse_placement == nullptr || !m_mouse_placement->GetValue() || !IsShown() || !m_bitmap.valid()) {
         event.Skip();
         return;
     }
@@ -726,8 +757,9 @@ void SurfacePainterDialog::refresh_result_ui()
         m_generated_virtual_extruders.clear();
 
     m_result_label->SetLabel(wxString::Format(
-        _L("Surface Painter core sampled %zu surface points. Projection: %s. Target mode: %s. Detail: %d."),
+        _L("Surface Painter core sampled %zu surface points. Model preview: %zu facets. Projection: %s. Target mode: %s. Detail: %d."),
         m_samples.size(),
+        m_last_painted_facets,
         m_projection_choice->GetStringSelection(),
         m_target_choice->GetStringSelection(),
         detail_level()
@@ -1033,6 +1065,55 @@ void SurfacePainterDialog::set_spin_value_clamped(wxSpinCtrlDouble* spin, double
     spin->SetValue(std::clamp(value, spin->GetMin(), spin->GetMax()));
 }
 
+void SurfacePainterDialog::set_transform_values(
+    double scale_u,
+    double scale_v,
+    double offset_u,
+    double offset_v,
+    double rotation_degrees
+)
+{
+    set_spin_value_clamped(m_scale_u, scale_u);
+    set_spin_value_clamped(m_scale_v, scale_v);
+    set_spin_value_clamped(m_offset_u, offset_u);
+    set_spin_value_clamped(m_offset_v, offset_v);
+    set_spin_value_clamped(m_rotation_degrees, rotation_degrees);
+}
+
+void SurfacePainterDialog::fit_image_to_decal()
+{
+    double scale_u = 0.45;
+    double scale_v = 0.45;
+    if (m_bitmap.valid() && m_bitmap.width > 0 && m_bitmap.height > 0) {
+        const double aspect = double(m_bitmap.width) / double(m_bitmap.height);
+        if (aspect >= 1.0)
+            scale_v = scale_u / aspect;
+        else
+            scale_u = scale_v * aspect;
+    }
+
+    set_transform_values(
+        scale_u,
+        scale_v,
+        (1.0 - scale_u) * 0.5,
+        (1.0 - scale_v) * 0.5,
+        0.0
+    );
+}
+
+void SurfacePainterDialog::center_image_in_decal()
+{
+    const double scale_u = m_scale_u != nullptr ? m_scale_u->GetValue() : 0.45;
+    const double scale_v = m_scale_v != nullptr ? m_scale_v->GetValue() : 0.45;
+    set_transform_values(
+        scale_u,
+        scale_v,
+        (1.0 - scale_u) * 0.5,
+        (1.0 - scale_v) * 0.5,
+        m_rotation_degrees != nullptr ? m_rotation_degrees->GetValue() : 0.0
+    );
+}
+
 int SurfacePainterDialog::detected_image_color_count() const
 {
     if (!m_bitmap.valid())
@@ -1079,7 +1160,10 @@ int SurfacePainterDialog::detected_image_color_count() const
 
 unsigned int SurfacePainterDialog::next_virtual_id() const
 {
-    unsigned int next_id = std::max(1u, m_num_physical + 1);
+    unsigned int next_id = std::max<unsigned int>(
+        1u,
+        m_num_physical + static_cast<unsigned int>(m_original_virtual_extruders.size()) + 1
+    );
     bool found_free_id = false;
     while (!found_free_id) {
         found_free_id = true;

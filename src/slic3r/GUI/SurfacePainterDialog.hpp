@@ -97,6 +97,7 @@ private:
     bool m_dragging_placement = false;
     bool m_rotating_placement = false;
     bool m_fast_preview = false;
+    size_t m_last_painted_facets = 0;
     wxPoint m_last_mouse_position;
     std::chrono::steady_clock::time_point m_last_drag_preview_time;
     unsigned int m_num_physical = 0;
@@ -135,6 +136,9 @@ private:
     void on_controls_changed(wxCommandEvent& event);
     void on_preview(wxCommandEvent& event);
     void on_apply(wxCommandEvent& event);
+    void on_fit_image(wxCommandEvent& event);
+    void on_center_image(wxCommandEvent& event);
+    void on_reset_transform(wxCommandEvent& event);
     void on_canvas_mouse(wxMouseEvent& event);
 
     bool load_image(const wxString& path);
@@ -158,6 +162,9 @@ private:
     void bind_canvas_events();
     void unbind_canvas_events();
     void set_spin_value_clamped(wxSpinCtrlDouble* spin, double value);
+    void set_transform_values(double scale_u, double scale_v, double offset_u, double offset_v, double rotation_degrees);
+    void fit_image_to_decal();
+    void center_image_in_decal();
     int detected_image_color_count() const;
     size_t apply_to_volume(ModelVolume& volume, const indexed_triangle_set* source_mesh) const;
     unsigned int next_virtual_id() const;

@@ -22,6 +22,7 @@ class wxStaticText;
 namespace Slic3r {
 class DynamicPrintConfig;
 class Model;
+class ModelVolume;
 }
 
 namespace Slic3r::GUI {
@@ -41,6 +42,8 @@ public:
     {
         return m_create_virtual_extruders;
     }
+
+    size_t apply_to_volume(ModelVolume& volume) const;
 
 protected:
     void on_dpi_changed(const wxRect& suggested_rect) override;
@@ -89,8 +92,11 @@ private:
     void rebuild_generated_virtual_extruders();
 
     SurfacePainter::ProjectionSettings projection_settings() const;
+    SurfacePainter::ProjectionSettings projection_settings_for_volume(const ModelVolume& volume) const;
     SurfacePainter::AssignmentKind target_kind() const;
+    std::vector<SurfacePainter::ColorTarget> color_targets() const;
     std::vector<SurfacePainter::SurfacePoint> make_probe_points() const;
+    std::vector<SurfacePainter::SurfacePoint> make_volume_points(const ModelVolume& volume) const;
     unsigned int next_virtual_id() const;
 };
 

@@ -7,6 +7,7 @@
 
 #include "libslic3r/Model.hpp"
 #include "libslic3r/PrintConfig.hpp"
+#include "libslic3r/TriangleSelector.hpp"
 
 #include <wx/button.h>
 #include <wx/choice.h>
@@ -22,6 +23,7 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <cstdio>
 #include <map>
 
 namespace Slic3r::GUI {
@@ -184,7 +186,7 @@ void SurfacePainterDialog::build_layout()
     buttons->AddStretchSpacer();
     auto* close_btn = new wxButton(this, wxID_CANCEL, _L("Close"));
     buttons->Add(close_btn, 0, wxRIGHT, 8);
-    m_apply_button = new wxButton(this, wxID_OK, _L("Create Color Mix targets"));
+    m_apply_button = new wxButton(this, wxID_OK, _L("Apply to selected volume"));
     m_apply_button->Bind(wxEVT_BUTTON, &SurfacePainterDialog::on_apply, this);
     m_apply_button->Enable(false);
     buttons->Add(m_apply_button, 0);
@@ -356,16 +358,11 @@ void SurfacePainterDialog::run_projection_probe()
     if (!m_bitmap.valid() || m_palette.empty())
         return;
 
-    std::vector<SurfacePainter::ColorTarget> targets;
-    targets.reserve(m_palette.size());
-    for (const PaletteEntry& entry : m_palette)
-        targets.push_back(entry.target);
-
     m_samples = SurfacePainter::paint_surface_points(
         make_probe_points(),
         m_bitmap,
         projection_settings(),
-        targets,
+        color_targets(),
         16
     );
 }
@@ -394,7 +391,7 @@ void SurfacePainterDialog::refresh_result_ui()
     }
 
     const bool virtual_mode = target_kind() == SurfacePainter::AssignmentKind::VirtualExtruder;
-    m_apply_button->SetLabel(virtual_mode ? _L("Create Color Mix targets") : _L("Close"));
+    m_apply_button->SetLabel(virtual_mode ? _L("Create Color Mix targets and apply") : _L("Apply to selected volume"));
     m_apply_button->Enable(!m_palette.empty());
     if (!virtual_mode)
         m_generated_virtual_extruders.clear();
@@ -448,11 +445,36 @@ SurfacePainter::ProjectionSettings SurfacePainterDialog::projection_settings() c
     return projection;
 }
 
+SurfacePainter::ProjectionSettings SurfacePainterDialog::projection_settings_for_volume(const ModelVolume& volume) const
+{
+    SurfacePainter::ProjectionSettings projection = projection_settings();
+    const BoundingBoxf3 bbox = volume.mesh().bounding_box();
+    Vec3d size = bbox.size();
+    for (int axis = 0; axis < 3; ++axis)
+        if (size(axis) <= 1e-6)
+            size(axis) = 1.0;
+
+    projection.origin = bbox.min;
+    projection.size = size;
+    projection.cylinder_center = Vec3d(bbox.center().x(), bbox.center().y(), bbox.min.z());
+    projection.cylinder_radius = std::max(1e-6, 0.5 * std::max(size.x(), size.y()));
+    return projection;
+}
+
 SurfacePainter::AssignmentKind SurfacePainterDialog::target_kind() const
 {
     return m_target_choice && m_target_choice->GetSelection() == 1
         ? SurfacePainter::AssignmentKind::VirtualExtruder
         : SurfacePainter::AssignmentKind::FixedExtruder;
+}
+
+std::vector<SurfacePainter::ColorTarget> SurfacePainterDialog::color_targets() const
+{
+    std::vector<SurfacePainter::ColorTarget> targets;
+    targets.reserve(m_palette.size());
+    for (const PaletteEntry& entry : m_palette)
+        targets.push_back(entry.target);
+    return targets;
 }
 
 std::vector<SurfacePainter::SurfacePoint> SurfacePainterDialog::make_probe_points() const
@@ -486,6 +508,55 @@ std::vector<SurfacePainter::SurfacePoint> SurfacePainterDialog::make_probe_point
     }
 
     return points;
+}
+
+std::vector<SurfacePainter::SurfacePoint> SurfacePainterDialog::make_volume_points(const ModelVolume& volume) const
+{
+    const indexed_triangle_set& its = volume.mesh().its;
+    std::vector<SurfacePainter::SurfacePoint> points;
+    points.reserve(its.indices.size());
+
+    for (size_t face_id = 0; face_id < its.indices.size(); ++face_id) {
+        const stl_triangle_vertex_indices& face = its.indices[face_id];
+        const Vec3d a = its.vertices[face[0]].cast<double>();
+        const Vec3d b = its.vertices[face[1]].cast<double>();
+        const Vec3d c = its.vertices[face[2]].cast<double>();
+        Vec3d normal = (b - a).cross(c - a);
+        if (normal.squaredNorm() > 1e-12)
+            normal.normalize();
+        else
+            normal = Vec3d::UnitZ();
+
+        points.push_back(SurfacePainter::SurfacePoint{
+            (a + b + c) / 3.0,
+            normal,
+            face_id,
+        });
+    }
+
+    return points;
+}
+
+size_t SurfacePainterDialog::apply_to_volume(ModelVolume& volume) const
+{
+    if (!m_bitmap.valid() || m_palette.empty() || volume.mesh().empty())
+        return 0;
+
+    std::vector<SurfacePainter::PaintedSample> painted = SurfacePainter::paint_surface_points(
+        make_volume_points(volume),
+        m_bitmap,
+        projection_settings_for_volume(volume),
+        color_targets(),
+        16
+    );
+
+    TriangleSelector selector(volume.mesh());
+    for (const SurfacePainter::PaintedSample& sample : painted)
+        selector.set_facet(static_cast<int>(sample.face_id), static_cast<TriangleStateType>(sample.target.id));
+    selector.garbage_collect();
+    volume.mm_segmentation_facets.set(selector);
+
+    return painted.size();
 }
 
 unsigned int SurfacePainterDialog::next_virtual_id() const

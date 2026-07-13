@@ -64,6 +64,7 @@
 #include "GalleryDialog.hpp"
 #include "NotificationManager.hpp"
 #include "Preferences.hpp"
+#include "Selection.hpp"
 #include "SurfacePainterDialog.hpp"
 #include "WebViewPanel.hpp"
 #include "UserAccount.hpp"
@@ -1708,18 +1709,36 @@ void MainFrame::init_menubar_as_editor()
 
         append_menu_item(windowMenu, wxID_ANY, _L("Surface Painter Lab"), _L("Load an image and test Surface Painter projection and color targets"),
             [this](wxCommandEvent&) {
+                ModelVolume* selected_volume = get_selected_volume(m_plater->get_selection());
+                if (selected_volume == nullptr) {
+                    MessageDialog(this, _L("Select exactly one object part or volume before applying Surface Painter."), _L("Surface Painter"), wxOK | wxICON_INFORMATION).ShowModal();
+                    return;
+                }
+
                 SurfacePainterDialog dialog(this, m_plater->model(), wxGetApp().preset_bundle->full_config());
                 if (dialog.ShowModal() != wxID_OK)
                     return;
-                if (!dialog.create_virtual_extruders())
-                    return;
 
-                m_plater->take_snapshot(_L("Create Surface Painter Color Mix targets"));
                 Model& model = m_plater->model();
-                std::vector<FullSpectrum::VirtualExtruder> merged = model.virtual_extruders;
-                const std::vector<FullSpectrum::VirtualExtruder>& generated = dialog.result_virtual_extruders();
-                merged.insert(merged.end(), generated.begin(), generated.end());
-                model.virtual_extruders = FullSpectrum::normalize_virtual_extruders(merged);
+                m_plater->take_snapshot(_L("Apply Surface Painter image"));
+                if (dialog.create_virtual_extruders()) {
+                    std::vector<FullSpectrum::VirtualExtruder> merged = model.virtual_extruders;
+                    const std::vector<FullSpectrum::VirtualExtruder>& generated = dialog.result_virtual_extruders();
+                    merged.insert(merged.end(), generated.begin(), generated.end());
+                    model.virtual_extruders = FullSpectrum::normalize_virtual_extruders(merged);
+                }
+                const size_t painted = dialog.apply_to_volume(*selected_volume);
+                if (painted == 0) {
+                    MessageDialog(this, _L("No facets were painted. Load an image before applying Surface Painter."), _L("Surface Painter"), wxOK | wxICON_INFORMATION).ShowModal();
+                    return;
+                }
+                for (size_t object_idx = 0; object_idx < model.objects.size(); ++object_idx) {
+                    ModelObject* object = model.objects[object_idx];
+                    if (std::find(object->volumes.begin(), object->volumes.end(), selected_volume) != object->volumes.end()) {
+                        wxGetApp().obj_list()->update_info_items(object_idx);
+                        break;
+                    }
+                }
                 m_plater->update();
                 if (GLCanvas3D* canvas = m_plater->canvas3D(); canvas != nullptr)
                     canvas->reload_scene(true);

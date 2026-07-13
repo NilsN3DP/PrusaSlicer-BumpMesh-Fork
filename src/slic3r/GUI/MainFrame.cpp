@@ -64,6 +64,7 @@
 #include "GalleryDialog.hpp"
 #include "NotificationManager.hpp"
 #include "Preferences.hpp"
+#include "SurfacePainterDialog.hpp"
 #include "WebViewPanel.hpp"
 #include "UserAccount.hpp"
 
@@ -1704,6 +1705,25 @@ void MainFrame::init_menubar_as_editor()
                         m_plater->sidebar().obj_list()->load_shape_object_from_gallery(input_files);
                 }
             }, "shape_gallery", nullptr, []() {return true; }, this);
+
+        append_menu_item(windowMenu, wxID_ANY, _L("Surface Painter Lab"), _L("Load an image and test Surface Painter projection and color targets"),
+            [this](wxCommandEvent&) {
+                SurfacePainterDialog dialog(this, m_plater->model(), wxGetApp().preset_bundle->full_config());
+                if (dialog.ShowModal() != wxID_OK)
+                    return;
+                if (!dialog.create_virtual_extruders())
+                    return;
+
+                m_plater->take_snapshot(_L("Create Surface Painter Color Mix targets"));
+                Model& model = m_plater->model();
+                std::vector<FullSpectrum::VirtualExtruder> merged = model.virtual_extruders;
+                const std::vector<FullSpectrum::VirtualExtruder>& generated = dialog.result_virtual_extruders();
+                merged.insert(merged.end(), generated.begin(), generated.end());
+                model.virtual_extruders = FullSpectrum::normalize_virtual_extruders(merged);
+                m_plater->update();
+                if (GLCanvas3D* canvas = m_plater->canvas3D(); canvas != nullptr)
+                    canvas->reload_scene(true);
+            }, "", nullptr, [this]() {return m_plater != nullptr; }, this);
         
         windowMenu->AppendSeparator();
         append_menu_item(windowMenu, wxID_ANY, _L("Print &Host Upload Queue") + "\tCtrl+J", _L("Display the Print Host Upload Queue window"),

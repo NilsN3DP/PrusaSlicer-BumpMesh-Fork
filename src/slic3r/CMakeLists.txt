@@ -159,6 +159,8 @@ set(SLIC3R_GUI_SOURCES
     GUI/SavePresetDialog.cpp
     GUI/FullSpectrumDialog.hpp
     GUI/FullSpectrumDialog.cpp
+    GUI/SurfacePainterDialog.hpp
+    GUI/SurfacePainterDialog.cpp
     GUI/BulkExportDialog.hpp
     GUI/BulkExportDialog.cpp
     GUI/PhysicalPrinterDialog.hpp

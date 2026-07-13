@@ -10,6 +10,7 @@
 #include "libslic3r/TriangleSelector.hpp"
 
 #include <wx/button.h>
+#include <wx/checkbox.h>
 #include <wx/choice.h>
 #include <wx/filedlg.h>
 #include <wx/image.h>
@@ -144,7 +145,9 @@ RefinedMesh refine_mesh_for_surface_painting(const indexed_triangle_set& input, 
 SurfacePainterDialog::SurfacePainterDialog(
     wxWindow* parent,
     const Model& model,
-    const DynamicPrintConfig& full_config
+    const DynamicPrintConfig& full_config,
+    ModelVolume* target_volume,
+    PreviewCallback preview_callback
 ) :
     DPIDialog(
         parent,
@@ -154,8 +157,16 @@ SurfacePainterDialog::SurfacePainterDialog(
         wxDefaultSize,
         wxDEFAULT_DIALOG_STYLE | wxRESIZE_BORDER
     ),
-    m_model(model)
+    m_model(model),
+    m_target_volume(target_volume),
+    m_preview_callback(std::move(preview_callback))
 {
+    if (m_target_volume != nullptr) {
+        m_original_mesh = m_target_volume->mesh().its;
+        m_original_mm_segmentation = m_target_volume->mm_segmentation_facets.get_data();
+        m_original_had_mm_segmentation = !m_target_volume->mm_segmentation_facets.empty();
+    }
+
     if (const ConfigOptionFloats* nozzle_diameter_opt =
             full_config.option<ConfigOptionFloats>("nozzle_diameter"))
         m_num_physical = static_cast<unsigned int>(nozzle_diameter_opt->values.size());
@@ -271,6 +282,17 @@ void SurfacePainterDialog::build_layout()
     m_offset_v = add_transform_spin(_L("Position V"), 0.0, -10.0, 10.0);
     root->Add(transform, 0, wxEXPAND | wxLEFT | wxRIGHT | wxBOTTOM, 12);
 
+    auto* preview_row = new wxBoxSizer(wxHORIZONTAL);
+    m_live_preview = new wxCheckBox(this, wxID_ANY, _L("Live preview on selected volume"));
+    m_live_preview->Bind(wxEVT_CHECKBOX, &SurfacePainterDialog::on_controls_changed, this);
+    m_live_preview->Enable(m_target_volume != nullptr);
+    preview_row->Add(m_live_preview, 0, wxALIGN_CENTER_VERTICAL | wxRIGHT, 12);
+    m_preview_button = new wxButton(this, wxID_ANY, _L("Preview on model"));
+    m_preview_button->Bind(wxEVT_BUTTON, &SurfacePainterDialog::on_preview, this);
+    m_preview_button->Enable(false);
+    preview_row->Add(m_preview_button, 0);
+    root->Add(preview_row, 0, wxEXPAND | wxLEFT | wxRIGHT | wxBOTTOM, 12);
+
     auto* body = new wxBoxSizer(wxHORIZONTAL);
     m_preview = new wxStaticBitmap(this, wxID_ANY, wxBitmap(300, 220));
     body->Add(m_preview, 0, wxRIGHT | wxBOTTOM, 12);
@@ -329,6 +351,7 @@ void SurfacePainterDialog::on_load_image(wxCommandEvent&)
     rebuild_palette();
     run_projection_probe();
     refresh_result_ui();
+    apply_preview_if_enabled();
 }
 
 void SurfacePainterDialog::on_controls_changed(wxCommandEvent&)
@@ -338,6 +361,20 @@ void SurfacePainterDialog::on_controls_changed(wxCommandEvent&)
     rebuild_palette();
     run_projection_probe();
     refresh_result_ui();
+    apply_preview_if_enabled();
+}
+
+void SurfacePainterDialog::on_preview(wxCommandEvent&)
+{
+    if (m_target_volume == nullptr || !m_bitmap.valid() || m_palette.empty())
+        return;
+
+    const size_t painted = apply_to_volume(*m_target_volume, m_original_mesh ? &*m_original_mesh : nullptr);
+    if (painted > 0) {
+        m_preview_was_applied = true;
+        if (m_preview_callback)
+            m_preview_callback(painted);
+    }
 }
 
 void SurfacePainterDialog::on_apply(wxCommandEvent&)
@@ -496,6 +533,8 @@ void SurfacePainterDialog::refresh_result_ui()
     const bool virtual_mode = target_kind() == SurfacePainter::AssignmentKind::VirtualExtruder;
     m_apply_button->SetLabel(virtual_mode ? _L("Create Color Mix targets and apply") : _L("Apply to selected volume"));
     m_apply_button->Enable(!m_palette.empty());
+    if (m_preview_button != nullptr)
+        m_preview_button->Enable(m_target_volume != nullptr && !m_palette.empty());
     if (!virtual_mode)
         m_generated_virtual_extruders.clear();
 
@@ -618,9 +657,8 @@ std::vector<SurfacePainter::SurfacePoint> SurfacePainterDialog::make_probe_point
     return points;
 }
 
-std::vector<SurfacePainter::SurfacePoint> SurfacePainterDialog::make_volume_points(const ModelVolume& volume) const
+std::vector<SurfacePainter::SurfacePoint> SurfacePainterDialog::make_volume_points(const indexed_triangle_set& its) const
 {
-    const indexed_triangle_set& its = volume.mesh().its;
     std::vector<SurfacePainter::SurfacePoint> points;
     points.reserve(its.indices.size());
 
@@ -647,18 +685,22 @@ std::vector<SurfacePainter::SurfacePoint> SurfacePainterDialog::make_volume_poin
 
 size_t SurfacePainterDialog::apply_to_volume(ModelVolume& volume) const
 {
+    return apply_to_volume(volume, nullptr);
+}
+
+size_t SurfacePainterDialog::apply_to_volume(ModelVolume& volume, const indexed_triangle_set* source_mesh) const
+{
     if (!m_bitmap.valid() || m_palette.empty() || volume.mesh().empty())
         return 0;
 
-    RefinedMesh refined = refine_mesh_for_surface_painting(volume.mesh().its, m_bitmap, detail_level());
-    if (refined.subdivisions > 1) {
-        volume.set_mesh(std::move(refined.mesh));
-        volume.calculate_convex_hull();
-        volume.set_new_unique_id();
-    }
+    const indexed_triangle_set& base_mesh = source_mesh != nullptr ? *source_mesh : volume.mesh().its;
+    RefinedMesh refined = refine_mesh_for_surface_painting(base_mesh, m_bitmap, detail_level());
+    volume.set_mesh(std::move(refined.mesh));
+    volume.calculate_convex_hull();
+    volume.set_new_unique_id();
 
     std::vector<SurfacePainter::PaintedSample> painted = SurfacePainter::paint_surface_points(
-        make_volume_points(volume),
+        make_volume_points(volume.mesh().its),
         m_bitmap,
         projection_settings_for_volume(volume),
         color_targets(),
@@ -674,9 +716,38 @@ size_t SurfacePainterDialog::apply_to_volume(ModelVolume& volume) const
     return painted.size();
 }
 
+void SurfacePainterDialog::restore_target_volume()
+{
+    if (m_target_volume == nullptr || !m_original_mesh)
+        return;
+
+    m_target_volume->set_mesh(*m_original_mesh);
+    m_target_volume->calculate_convex_hull();
+    m_target_volume->set_new_unique_id();
+    m_target_volume->mm_segmentation_facets.reset();
+
+    if (m_original_had_mm_segmentation) {
+        TriangleSelector selector(m_target_volume->mesh());
+        selector.deserialize(m_original_mm_segmentation, false);
+        m_target_volume->mm_segmentation_facets.set(selector);
+    }
+
+    if (m_preview_callback)
+        m_preview_callback(0);
+}
+
 int SurfacePainterDialog::detail_level() const
 {
     return m_detail_level ? m_detail_level->GetValue() : 4;
+}
+
+void SurfacePainterDialog::apply_preview_if_enabled()
+{
+    if (m_live_preview == nullptr || !m_live_preview->GetValue())
+        return;
+
+    wxCommandEvent event;
+    on_preview(event);
 }
 
 unsigned int SurfacePainterDialog::next_virtual_id() const

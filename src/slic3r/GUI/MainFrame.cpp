@@ -1715,12 +1715,34 @@ void MainFrame::init_menubar_as_editor()
                     return;
                 }
 
-                SurfacePainterDialog dialog(this, m_plater->model(), wxGetApp().preset_bundle->full_config());
-                if (dialog.ShowModal() != wxID_OK)
-                    return;
-
                 Model& model = m_plater->model();
+                auto refresh_surface_painter_target = [this, &model, selected_volume](size_t) {
+                    for (size_t object_idx = 0; object_idx < model.objects.size(); ++object_idx) {
+                        ModelObject* object = model.objects[object_idx];
+                        if (std::find(object->volumes.begin(), object->volumes.end(), selected_volume) != object->volumes.end()) {
+                            object->invalidate_bounding_box();
+                            wxGetApp().obj_list()->update_info_items(object_idx);
+                            break;
+                        }
+                    }
+                    m_plater->update();
+                    if (GLCanvas3D* canvas = m_plater->canvas3D(); canvas != nullptr)
+                        canvas->reload_scene(true);
+                };
+
                 m_plater->take_snapshot(_L("Apply Surface Painter image"));
+                SurfacePainterDialog dialog(
+                    this,
+                    m_plater->model(),
+                    wxGetApp().preset_bundle->full_config(),
+                    selected_volume,
+                    refresh_surface_painter_target
+                );
+                if (dialog.ShowModal() != wxID_OK) {
+                    dialog.restore_target_volume();
+                    return;
+                }
+
                 if (dialog.create_virtual_extruders()) {
                     std::vector<FullSpectrum::VirtualExtruder> merged = model.virtual_extruders;
                     const std::vector<FullSpectrum::VirtualExtruder>& generated = dialog.result_virtual_extruders();
@@ -1732,17 +1754,7 @@ void MainFrame::init_menubar_as_editor()
                     MessageDialog(this, _L("No facets were painted. Load an image before applying Surface Painter."), _L("Surface Painter"), wxOK | wxICON_INFORMATION).ShowModal();
                     return;
                 }
-                for (size_t object_idx = 0; object_idx < model.objects.size(); ++object_idx) {
-                    ModelObject* object = model.objects[object_idx];
-                    if (std::find(object->volumes.begin(), object->volumes.end(), selected_volume) != object->volumes.end()) {
-                        object->invalidate_bounding_box();
-                        wxGetApp().obj_list()->update_info_items(object_idx);
-                        break;
-                    }
-                }
-                m_plater->update();
-                if (GLCanvas3D* canvas = m_plater->canvas3D(); canvas != nullptr)
-                    canvas->reload_scene(true);
+                refresh_surface_painter_target(painted);
             }, "", nullptr, [this]() {return m_plater != nullptr; }, this);
         
         windowMenu->AppendSeparator();

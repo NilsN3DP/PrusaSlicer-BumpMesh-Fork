@@ -5,13 +5,17 @@
 
 #include "libslic3r/Feature/FullSpectrum/VirtualExtruder.hpp"
 #include "libslic3r/Feature/SurfacePainter/SurfacePainter.hpp"
+#include "libslic3r/TriangleSelector.hpp"
 
 #include <wx/bitmap.h>
 #include <wx/string.h>
 
+#include <functional>
+#include <optional>
 #include <vector>
 
 class wxButton;
+class wxCheckBox;
 class wxChoice;
 class wxListBox;
 class wxPanel;
@@ -31,7 +35,15 @@ namespace Slic3r::GUI {
 class SurfacePainterDialog : public DPIDialog
 {
 public:
-    SurfacePainterDialog(wxWindow* parent, const Model& model, const DynamicPrintConfig& full_config);
+    using PreviewCallback = std::function<void(size_t)>;
+
+    SurfacePainterDialog(
+        wxWindow* parent,
+        const Model& model,
+        const DynamicPrintConfig& full_config,
+        ModelVolume* target_volume = nullptr,
+        PreviewCallback preview_callback = {}
+    );
     ~SurfacePainterDialog() override = default;
 
     const std::vector<FullSpectrum::VirtualExtruder>& result_virtual_extruders() const
@@ -45,6 +57,8 @@ public:
     }
 
     size_t apply_to_volume(ModelVolume& volume) const;
+    void restore_target_volume();
+    bool preview_was_applied() const { return m_preview_was_applied; }
 
 protected:
     void on_dpi_changed(const wxRect& suggested_rect) override;
@@ -59,6 +73,12 @@ private:
     };
 
     const Model& m_model;
+    ModelVolume* m_target_volume{nullptr};
+    PreviewCallback m_preview_callback;
+    std::optional<indexed_triangle_set> m_original_mesh;
+    TriangleSelector::TriangleSplittingData m_original_mm_segmentation;
+    bool m_original_had_mm_segmentation = false;
+    bool m_preview_was_applied = false;
     unsigned int m_num_physical = 0;
     std::vector<std::string> m_physical_colors;
 
@@ -76,6 +96,8 @@ private:
     wxChoice* m_target_choice{nullptr};
     wxSpinCtrl* m_palette_size{nullptr};
     wxSpinCtrl* m_detail_level{nullptr};
+    wxCheckBox* m_live_preview{nullptr};
+    wxButton* m_preview_button{nullptr};
     wxSpinCtrlDouble* m_scale_u{nullptr};
     wxSpinCtrlDouble* m_scale_v{nullptr};
     wxSpinCtrlDouble* m_offset_u{nullptr};
@@ -88,6 +110,7 @@ private:
     void apply_colors();
     void on_load_image(wxCommandEvent& event);
     void on_controls_changed(wxCommandEvent& event);
+    void on_preview(wxCommandEvent& event);
     void on_apply(wxCommandEvent& event);
 
     bool load_image(const wxString& path);
@@ -102,8 +125,10 @@ private:
     SurfacePainter::AssignmentKind target_kind() const;
     std::vector<SurfacePainter::ColorTarget> color_targets() const;
     std::vector<SurfacePainter::SurfacePoint> make_probe_points() const;
-    std::vector<SurfacePainter::SurfacePoint> make_volume_points(const ModelVolume& volume) const;
+    std::vector<SurfacePainter::SurfacePoint> make_volume_points(const indexed_triangle_set& mesh) const;
     int detail_level() const;
+    void apply_preview_if_enabled();
+    size_t apply_to_volume(ModelVolume& volume, const indexed_triangle_set* source_mesh) const;
     unsigned int next_virtual_id() const;
 };
 

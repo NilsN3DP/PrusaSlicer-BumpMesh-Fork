@@ -203,7 +203,7 @@ RefinedMesh refine_mesh_for_surface_painting(const indexed_triangle_set& input, 
 
 SurfacePainterDialog::SurfacePainterDialog(
     wxWindow* parent,
-    const Model& model,
+    Model& model,
     const DynamicPrintConfig& full_config,
     ModelVolume* target_volume,
     PreviewCallback preview_callback,
@@ -224,6 +224,8 @@ SurfacePainterDialog::SurfacePainterDialog(
     m_apply_callback(std::move(apply_callback)),
     m_canvas(canvas)
 {
+    m_original_virtual_extruders = m_model.virtual_extruders;
+
     if (m_target_volume != nullptr) {
         m_original_mesh = m_target_volume->mesh().its;
         m_original_mm_segmentation = m_target_volume->mm_segmentation_facets.get_data();
@@ -313,7 +315,7 @@ void SurfacePainterDialog::build_layout()
     m_target_choice = new wxChoice(this, wxID_ANY);
     m_target_choice->Append(_L("Fixed extruders"));
     m_target_choice->Append(_L("Color Mix virtual extruders"));
-    m_target_choice->SetSelection(0);
+    m_target_choice->SetSelection(1);
     m_target_choice->Bind(wxEVT_CHOICE, &SurfacePainterDialog::on_controls_changed, this);
     settings->Add(m_target_choice, 0, wxRIGHT, 14);
 
@@ -424,8 +426,12 @@ void SurfacePainterDialog::on_load_image(wxCommandEvent&)
         return;
     }
 
-    if (m_palette_size != nullptr)
-        m_palette_size->SetValue(detected_image_color_count());
+    if (m_palette_size != nullptr) {
+        const int detected_colors = detected_image_color_count();
+        m_palette_size->SetValue(detected_colors);
+        if (m_target_choice != nullptr && detected_colors > int(m_num_physical))
+            m_target_choice->SetSelection(1);
+    }
 
     rebuild_preview();
     rebuild_palette();
@@ -449,18 +455,20 @@ void SurfacePainterDialog::on_preview(wxCommandEvent&)
     if (m_target_volume == nullptr || !m_bitmap.valid() || m_palette.empty())
         return;
 
+    ensure_preview_virtual_extruders();
     const size_t painted = apply_to_volume(*m_target_volume, m_original_mesh ? &*m_original_mesh : nullptr);
-    if (painted > 0) {
-        m_preview_was_applied = true;
-        if (m_preview_callback)
-            m_preview_callback(painted);
-    }
+    m_preview_was_applied = true;
+    if (m_preview_callback)
+        m_preview_callback(painted);
 }
 
 void SurfacePainterDialog::on_apply(wxCommandEvent&)
 {
     m_create_virtual_extruders = target_kind() == SurfacePainter::AssignmentKind::VirtualExtruder
         && !m_generated_virtual_extruders.empty();
+    if (!m_create_virtual_extruders)
+        restore_preview_virtual_extruders();
+
     if (m_apply_callback) {
         if (m_apply_callback(*this)) {
             m_committed = true;
@@ -731,19 +739,45 @@ void SurfacePainterDialog::refresh_result_ui()
 void SurfacePainterDialog::rebuild_generated_virtual_extruders()
 {
     m_generated_virtual_extruders.clear();
-    if (target_kind() != SurfacePainter::AssignmentKind::VirtualExtruder || m_num_physical < 2)
+    if (target_kind() != SurfacePainter::AssignmentKind::VirtualExtruder || m_num_physical < 1) {
+        restore_preview_virtual_extruders();
         return;
+    }
 
     for (const PaletteEntry& entry : m_palette) {
         FullSpectrum::VirtualExtruder ve;
         ve.id = entry.target.id;
         ve.color = color_to_hex(entry.color);
-        ve.components = {
-            FullSpectrum::VirtualExtruderComponent{1, 0.5},
-            FullSpectrum::VirtualExtruderComponent{2, 0.5},
-        };
+        ve.components = m_num_physical >= 2
+            ? FullSpectrum::VirtualExtruderComponents{
+                FullSpectrum::VirtualExtruderComponent{1, 0.5},
+                FullSpectrum::VirtualExtruderComponent{2, 0.5},
+            }
+            : FullSpectrum::VirtualExtruderComponents{
+                FullSpectrum::VirtualExtruderComponent{1, 1.0},
+            };
         m_generated_virtual_extruders.push_back(std::move(ve));
     }
+}
+
+void SurfacePainterDialog::ensure_preview_virtual_extruders()
+{
+    if (target_kind() != SurfacePainter::AssignmentKind::VirtualExtruder || m_generated_virtual_extruders.empty())
+        return;
+
+    std::vector<FullSpectrum::VirtualExtruder> merged = m_original_virtual_extruders;
+    merged.insert(merged.end(), m_generated_virtual_extruders.begin(), m_generated_virtual_extruders.end());
+    m_model.virtual_extruders = FullSpectrum::normalize_virtual_extruders(merged);
+    m_preview_virtual_extruders_installed = true;
+}
+
+void SurfacePainterDialog::restore_preview_virtual_extruders()
+{
+    if (!m_preview_virtual_extruders_installed)
+        return;
+
+    m_model.virtual_extruders = m_original_virtual_extruders;
+    m_preview_virtual_extruders_installed = false;
 }
 
 SurfacePainter::ProjectionSettings SurfacePainterDialog::projection_settings() const
@@ -914,6 +948,7 @@ void SurfacePainterDialog::restore_target_volume()
 
     if (m_preview_callback)
         m_preview_callback(0);
+    restore_preview_virtual_extruders();
 }
 
 int SurfacePainterDialog::detail_level() const
@@ -1044,9 +1079,18 @@ int SurfacePainterDialog::detected_image_color_count() const
 
 unsigned int SurfacePainterDialog::next_virtual_id() const
 {
-    unsigned int next_id = std::max(100u, m_num_physical + 1);
-    for (const FullSpectrum::VirtualExtruder& ve : m_model.virtual_extruders)
-        next_id = std::max(next_id, ve.id + 1);
+    unsigned int next_id = std::max(1u, m_num_physical + 1);
+    bool found_free_id = false;
+    while (!found_free_id) {
+        found_free_id = true;
+        for (const FullSpectrum::VirtualExtruder& ve : m_original_virtual_extruders) {
+            if (ve.id == next_id) {
+                ++next_id;
+                found_free_id = false;
+                break;
+            }
+        }
+    }
     return next_id;
 }
 

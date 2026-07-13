@@ -45,7 +45,7 @@ public:
 
     SurfacePainterDialog(
         wxWindow* parent,
-        const Model& model,
+        Model& model,
         const DynamicPrintConfig& full_config,
         ModelVolume* target_volume = nullptr,
         PreviewCallback preview_callback = {},
@@ -81,14 +81,16 @@ private:
         SurfacePainter::ColorTarget target;
     };
 
-    const Model& m_model;
+    Model& m_model;
     ModelVolume* m_target_volume{nullptr};
     PreviewCallback m_preview_callback;
     ApplyCallback m_apply_callback;
     GLCanvas3D* m_canvas{nullptr};
     std::optional<indexed_triangle_set> m_original_mesh;
     TriangleSelector::TriangleSplittingData m_original_mm_segmentation;
+    FullSpectrum::VirtualExtruders m_original_virtual_extruders;
     bool m_original_had_mm_segmentation = false;
+    bool m_preview_virtual_extruders_installed = false;
     bool m_preview_was_applied = false;
     bool m_committed = false;
     bool m_canvas_events_bound = false;
@@ -141,6 +143,8 @@ private:
     void run_projection_probe();
     void refresh_result_ui();
     void rebuild_generated_virtual_extruders();
+    void ensure_preview_virtual_extruders();
+    void restore_preview_virtual_extruders();
 
     SurfacePainter::ProjectionSettings projection_settings() const;
     SurfacePainter::ProjectionSettings projection_settings_for_volume(const ModelVolume& volume) const;

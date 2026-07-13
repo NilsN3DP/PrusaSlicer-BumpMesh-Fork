@@ -812,8 +812,9 @@ void GLVolumeCollection::render(GLVolumeCollection::ERenderType type, bool disab
         const Matrix3d view_normal_matrix = view_matrix.linear() * world_matrix_inv_transp;
         const int obj_idx = volume.first->object_idx();
         const int vol_idx = volume.first->volume_idx();
-        const bool render_as_mmu_painted = is_render_as_mmu_painted_enabled && (!volume.first->selected || bump_mesh_gizmo_active) &&
-            !volume.first->is_outside && (volume.first->hover == GLVolume::HS_None || bump_mesh_gizmo_active) && !volume.first->is_wipe_tower() && obj_idx >= 0 && vol_idx >= 0 &&
+        const bool render_painted_surface = bump_mesh_gizmo_active || volume.first->selected || volume.first->hover == GLVolume::HS_None;
+        const bool render_as_mmu_painted = is_render_as_mmu_painted_enabled && render_painted_surface &&
+            !volume.first->is_outside && !volume.first->is_wipe_tower() && obj_idx >= 0 && vol_idx >= 0 &&
             !model_objects[obj_idx]->volumes[vol_idx]->mm_segmentation_facets.empty() &&
             type != GLVolumeCollection::ERenderType::Transparent; // to filter out shells (not very nice)
         volume.first->set_render_color(true);

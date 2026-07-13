@@ -28,6 +28,7 @@
 #include <array>
 #include <cmath>
 #include <cstdio>
+#include <functional>
 #include <map>
 
 namespace Slic3r::GUI {
@@ -56,6 +57,11 @@ int bucket_key(const SurfacePainter::ColorRGBA& color)
     const int g = int(color.g) / 32;
     const int b = int(color.b) / 32;
     return (r << 8) | (g << 4) | b;
+}
+
+int exact_color_key(const SurfacePainter::ColorRGBA& color)
+{
+    return (int(color.r) << 16) | (int(color.g) << 8) | int(color.b);
 }
 
 struct Bucket
@@ -264,7 +270,7 @@ void SurfacePainterDialog::build_layout()
     settings->Add(new wxStaticText(this, wxID_ANY, _L("Colors")), 0, wxALIGN_CENTER_VERTICAL | wxRIGHT, 6);
     m_palette_size = new wxSpinCtrl(this, wxID_ANY);
     m_palette_size->SetRange(2, 16);
-    m_palette_size->SetValue(6);
+    m_palette_size->SetValue(2);
     m_palette_size->Bind(wxEVT_SPINCTRL, &SurfacePainterDialog::on_controls_changed, this);
     settings->Add(m_palette_size, 0, wxRIGHT, 14);
 
@@ -277,12 +283,12 @@ void SurfacePainterDialog::build_layout()
     root->Add(settings, 0, wxEXPAND | wxLEFT | wxRIGHT | wxBOTTOM, 12);
 
     auto* transform = new wxBoxSizer(wxHORIZONTAL);
-    auto add_transform_spin = [this, transform](const wxString& label, double value, double min_value, double max_value) {
+    auto add_transform_spin = [this, transform](const wxString& label, double value, double min_value, double max_value, double increment = 0.01, int digits = 3) {
         transform->Add(new wxStaticText(this, wxID_ANY, label), 0, wxALIGN_CENTER_VERTICAL | wxRIGHT, 6);
         auto* spin = new wxSpinCtrlDouble(this, wxID_ANY);
         spin->SetRange(min_value, max_value);
-        spin->SetDigits(2);
-        spin->SetIncrement(0.05);
+        spin->SetDigits(digits);
+        spin->SetIncrement(increment);
         spin->SetValue(value);
         spin->Bind(wxEVT_SPINCTRLDOUBLE, &SurfacePainterDialog::on_controls_changed, this);
         spin->Bind(wxEVT_TEXT, &SurfacePainterDialog::on_controls_changed, this);
@@ -293,6 +299,10 @@ void SurfacePainterDialog::build_layout()
     m_scale_v = add_transform_spin(_L("Scale V"), 1.0, 0.05, 10.0);
     m_offset_u = add_transform_spin(_L("Position U"), 0.0, -10.0, 10.0);
     m_offset_v = add_transform_spin(_L("Position V"), 0.0, -10.0, 10.0);
+    m_rotation_degrees = add_transform_spin(_L("Rotation"), 0.0, -180.0, 180.0, 1.0, 1);
+    m_repeat_image = new wxCheckBox(this, wxID_ANY, _L("Repeat image"));
+    m_repeat_image->Bind(wxEVT_CHECKBOX, &SurfacePainterDialog::on_controls_changed, this);
+    transform->Add(m_repeat_image, 0, wxALIGN_CENTER_VERTICAL);
     root->Add(transform, 0, wxEXPAND | wxLEFT | wxRIGHT | wxBOTTOM, 12);
 
     auto* preview_row = new wxBoxSizer(wxHORIZONTAL);
@@ -305,6 +315,7 @@ void SurfacePainterDialog::build_layout()
     m_preview_button->Enable(false);
     preview_row->Add(m_preview_button, 0, wxRIGHT, 12);
     m_mouse_placement = new wxCheckBox(this, wxID_ANY, _L("Mouse placement"));
+    m_mouse_placement->Bind(wxEVT_CHECKBOX, &SurfacePainterDialog::on_controls_changed, this);
     m_mouse_placement->Enable(m_target_volume != nullptr && m_canvas != nullptr);
     preview_row->Add(m_mouse_placement, 0, wxALIGN_CENTER_VERTICAL);
     root->Add(preview_row, 0, wxEXPAND | wxLEFT | wxRIGHT | wxBOTTOM, 12);
@@ -362,6 +373,9 @@ void SurfacePainterDialog::on_load_image(wxCommandEvent&)
         ErrorDialog(this, _L("The selected image could not be loaded."), false).ShowModal();
         return;
     }
+
+    if (m_palette_size != nullptr)
+        m_palette_size->SetValue(detected_image_color_count());
 
     rebuild_preview();
     rebuild_palette();
@@ -422,6 +436,16 @@ void SurfacePainterDialog::on_canvas_mouse(wxMouseEvent& event)
     wxWindow* event_window = dynamic_cast<wxWindow*>(event.GetEventObject());
     if (event.LeftDown()) {
         m_dragging_placement = true;
+        m_rotating_placement = false;
+        m_last_mouse_position = event.GetPosition();
+        if (event_window != nullptr && !event_window->HasCapture())
+            event_window->CaptureMouse();
+        return;
+    }
+
+    if (event.RightDown()) {
+        m_rotating_placement = true;
+        m_dragging_placement = false;
         m_last_mouse_position = event.GetPosition();
         if (event_window != nullptr && !event_window->HasCapture())
             event_window->CaptureMouse();
@@ -435,15 +459,37 @@ void SurfacePainterDialog::on_canvas_mouse(wxMouseEvent& event)
         return;
     }
 
+    if (event.RightUp()) {
+        m_rotating_placement = false;
+        if (event_window != nullptr && event_window->HasCapture())
+            event_window->ReleaseMouse();
+        return;
+    }
+
     if (event.Dragging() && event.LeftIsDown() && m_dragging_placement) {
         const wxPoint position = event.GetPosition();
         const int dx = position.x - m_last_mouse_position.x;
         const int dy = position.y - m_last_mouse_position.y;
         m_last_mouse_position = position;
 
-        constexpr double sensitivity = 0.003;
-        set_spin_value_clamped(m_offset_u, m_offset_u->GetValue() - double(dx) * sensitivity);
-        set_spin_value_clamped(m_offset_v, m_offset_v->GetValue() + double(dy) * sensitivity);
+        const wxSize size = event_window != nullptr ? event_window->GetClientSize() : wxSize(1000, 800);
+        const double modifier = event.ControlDown() ? 4.0 : (event.ShiftDown() ? 0.2 : 1.0);
+        const double u_step = 2.5 * std::max(0.05, m_scale_u->GetValue()) * modifier / double(std::max(1, size.GetWidth()));
+        const double v_step = 2.5 * std::max(0.05, m_scale_v->GetValue()) * modifier / double(std::max(1, size.GetHeight()));
+        set_spin_value_clamped(m_offset_u, m_offset_u->GetValue() - double(dx) * u_step);
+        set_spin_value_clamped(m_offset_v, m_offset_v->GetValue() + double(dy) * v_step);
+        refresh_after_transform_change();
+        return;
+    }
+
+    if (event.Dragging() && event.RightIsDown() && m_rotating_placement) {
+        const wxPoint position = event.GetPosition();
+        const int dx = position.x - m_last_mouse_position.x;
+        const int dy = position.y - m_last_mouse_position.y;
+        m_last_mouse_position = position;
+
+        const double modifier = event.ControlDown() ? 3.0 : (event.ShiftDown() ? 0.2 : 1.0);
+        set_spin_value_clamped(m_rotation_degrees, m_rotation_degrees->GetValue() + double(dx + dy) * 0.5 * modifier);
         refresh_after_transform_change();
         return;
     }
@@ -451,7 +497,8 @@ void SurfacePainterDialog::on_canvas_mouse(wxMouseEvent& event)
     if (event.GetWheelRotation() != 0) {
         const int delta = event.GetWheelDelta() == 0 ? 120 : event.GetWheelDelta();
         const double steps = double(event.GetWheelRotation()) / double(delta);
-        const double factor = std::pow(1.08, steps);
+        const double base = event.ControlDown() ? 1.35 : (event.ShiftDown() ? 1.03 : 1.15);
+        const double factor = std::pow(base, steps);
         set_spin_value_clamped(m_scale_u, m_scale_u->GetValue() * factor);
         set_spin_value_clamped(m_scale_v, m_scale_v->GetValue() * factor);
         refresh_after_transform_change();
@@ -655,14 +702,15 @@ SurfacePainter::ProjectionSettings SurfacePainterDialog::projection_settings() c
     projection.scale_v = m_scale_v ? m_scale_v->GetValue() : 1.0;
     projection.offset_u = m_offset_u ? m_offset_u->GetValue() : 0.0;
     projection.offset_v = m_offset_v ? m_offset_v->GetValue() : 0.0;
-    projection.clamp = true;
+    projection.rotation_radians = (m_rotation_degrees ? m_rotation_degrees->GetValue() : 0.0) * PI / 180.0;
+    projection.repeat = m_repeat_image != nullptr && m_repeat_image->GetValue();
+    projection.clamp = !projection.repeat;
 
     switch (m_projection_choice ? m_projection_choice->GetSelection() : 0) {
     case 1: projection.mode = SurfacePainter::ProjectionMode::PlanarXZ; break;
     case 2: projection.mode = SurfacePainter::ProjectionMode::PlanarYZ; break;
     case 3:
         projection.mode = SurfacePainter::ProjectionMode::CylindricalZ;
-        projection.clamp = false;
         break;
     default: projection.mode = SurfacePainter::ProjectionMode::PlanarXY; break;
     }
@@ -847,6 +895,8 @@ void SurfacePainterDialog::bind_canvas_events()
     wxWindow* canvas_window = m_canvas->get_wxglcanvas();
     canvas_window->Bind(wxEVT_LEFT_DOWN, &SurfacePainterDialog::on_canvas_mouse, this);
     canvas_window->Bind(wxEVT_LEFT_UP, &SurfacePainterDialog::on_canvas_mouse, this);
+    canvas_window->Bind(wxEVT_RIGHT_DOWN, &SurfacePainterDialog::on_canvas_mouse, this);
+    canvas_window->Bind(wxEVT_RIGHT_UP, &SurfacePainterDialog::on_canvas_mouse, this);
     canvas_window->Bind(wxEVT_MOTION, &SurfacePainterDialog::on_canvas_mouse, this);
     canvas_window->Bind(wxEVT_MOUSEWHEEL, &SurfacePainterDialog::on_canvas_mouse, this);
     m_canvas_events_bound = true;
@@ -862,6 +912,8 @@ void SurfacePainterDialog::unbind_canvas_events()
         canvas_window->ReleaseMouse();
     canvas_window->Unbind(wxEVT_LEFT_DOWN, &SurfacePainterDialog::on_canvas_mouse, this);
     canvas_window->Unbind(wxEVT_LEFT_UP, &SurfacePainterDialog::on_canvas_mouse, this);
+    canvas_window->Unbind(wxEVT_RIGHT_DOWN, &SurfacePainterDialog::on_canvas_mouse, this);
+    canvas_window->Unbind(wxEVT_RIGHT_UP, &SurfacePainterDialog::on_canvas_mouse, this);
     canvas_window->Unbind(wxEVT_MOTION, &SurfacePainterDialog::on_canvas_mouse, this);
     canvas_window->Unbind(wxEVT_MOUSEWHEEL, &SurfacePainterDialog::on_canvas_mouse, this);
     m_canvas_events_bound = false;
@@ -873,6 +925,50 @@ void SurfacePainterDialog::set_spin_value_clamped(wxSpinCtrlDouble* spin, double
         return;
 
     spin->SetValue(std::clamp(value, spin->GetMin(), spin->GetMax()));
+}
+
+int SurfacePainterDialog::detected_image_color_count() const
+{
+    if (!m_bitmap.valid())
+        return 2;
+
+    std::map<int, size_t> exact_counts;
+    std::map<int, size_t> bucket_counts;
+    const size_t stride = std::max<size_t>(1, m_bitmap.pixels.size() / 250000);
+    size_t opaque_samples = 0;
+
+    for (size_t i = 0; i < m_bitmap.pixels.size(); i += stride) {
+        const SurfacePainter::ColorRGBA& color = m_bitmap.pixels[i];
+        if (color.a < 16)
+            continue;
+        ++opaque_samples;
+        ++exact_counts[exact_color_key(color)];
+        ++bucket_counts[bucket_key(color)];
+    }
+
+    if (opaque_samples == 0)
+        return 2;
+
+    if (exact_counts.size() >= 2 && exact_counts.size() <= 16)
+        return static_cast<int>(exact_counts.size());
+
+    std::vector<size_t> bucket_sizes;
+    bucket_sizes.reserve(bucket_counts.size());
+    for (const auto& pair : bucket_counts)
+        bucket_sizes.push_back(pair.second);
+    std::sort(bucket_sizes.begin(), bucket_sizes.end(), std::greater<size_t>());
+
+    const size_t min_bucket_size = std::max<size_t>(1, opaque_samples / 200);
+    int detected = 0;
+    for (size_t count : bucket_sizes) {
+        if (count < min_bucket_size)
+            break;
+        ++detected;
+        if (detected >= 16)
+            break;
+    }
+
+    return std::clamp(detected, 2, 16);
 }
 
 unsigned int SurfacePainterDialog::next_virtual_id() const

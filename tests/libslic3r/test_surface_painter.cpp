@@ -1,4 +1,5 @@
 #include <catch2/catch_test_macros.hpp>
+#include <catch2/catch_approx.hpp>
 
 #include "libslic3r/Feature/SurfacePainter/SurfacePainter.hpp"
 
@@ -73,6 +74,86 @@ TEST_CASE("SurfacePainter applies image scale and offset in UV space", "[Surface
 
     CHECK(uv.u == 0.5);
     CHECK(uv.v == 0.5);
+}
+
+TEST_CASE("SurfacePainter skips samples outside a single decal", "[SurfacePainter]")
+{
+    const Bitmap bitmap{
+        1,
+        1,
+        {
+            ColorRGBA{0, 255, 0, 255},
+        },
+    };
+    const std::vector<ColorTarget> palette{
+        ColorTarget{ColorRGBA{0, 255, 0, 255}, AssignmentKind::FixedExtruder, 1},
+    };
+
+    ProjectionSettings projection;
+    projection.mode = ProjectionMode::PlanarXY;
+    projection.origin = Vec3d(0.0, 0.0, 0.0);
+    projection.size = Vec3d(10.0, 10.0, 1.0);
+    projection.scale_u = 0.5;
+    projection.scale_v = 0.5;
+    projection.offset_u = 0.25;
+    projection.offset_v = 0.25;
+
+    const std::vector<SurfacePoint> points{
+        SurfacePoint{Vec3d(5.0, 5.0, 0.0), Vec3d::UnitZ(), 1},
+        SurfacePoint{Vec3d(10.0, 10.0, 0.0), Vec3d::UnitZ(), 2},
+    };
+
+    const std::vector<PaintedSample> painted = paint_surface_points(points, bitmap, projection, palette);
+
+    REQUIRE(painted.size() == 1);
+    CHECK(painted.front().face_id == 1);
+}
+
+TEST_CASE("SurfacePainter can repeat decal projection", "[SurfacePainter]")
+{
+    const Bitmap bitmap{
+        1,
+        1,
+        {
+            ColorRGBA{0, 255, 0, 255},
+        },
+    };
+    const std::vector<ColorTarget> palette{
+        ColorTarget{ColorRGBA{0, 255, 0, 255}, AssignmentKind::FixedExtruder, 1},
+    };
+
+    ProjectionSettings projection;
+    projection.mode = ProjectionMode::PlanarXY;
+    projection.origin = Vec3d(0.0, 0.0, 0.0);
+    projection.size = Vec3d(10.0, 10.0, 1.0);
+    projection.scale_u = 0.5;
+    projection.scale_v = 0.5;
+    projection.offset_u = 0.25;
+    projection.offset_v = 0.25;
+    projection.repeat = true;
+
+    const std::vector<SurfacePoint> points{
+        SurfacePoint{Vec3d(5.0, 5.0, 0.0), Vec3d::UnitZ(), 1},
+        SurfacePoint{Vec3d(10.0, 10.0, 0.0), Vec3d::UnitZ(), 2},
+    };
+
+    const std::vector<PaintedSample> painted = paint_surface_points(points, bitmap, projection, palette);
+
+    REQUIRE(painted.size() == 2);
+}
+
+TEST_CASE("SurfacePainter rotates decal UVs around image center", "[SurfacePainter]")
+{
+    ProjectionSettings projection;
+    projection.mode = ProjectionMode::PlanarXY;
+    projection.origin = Vec3d(0.0, 0.0, 0.0);
+    projection.size = Vec3d(10.0, 10.0, 1.0);
+    projection.rotation_radians = 0.5 * PI;
+
+    const UV uv = project_point(SurfacePoint{Vec3d(7.5, 5.0, 0.0), Vec3d::UnitZ(), 1}, projection);
+
+    CHECK(uv.u == Catch::Approx(0.5));
+    CHECK(uv.v == Catch::Approx(0.75));
 }
 
 TEST_CASE("SurfacePainter can target virtual extruders for Color Mix integration", "[SurfacePainter]")

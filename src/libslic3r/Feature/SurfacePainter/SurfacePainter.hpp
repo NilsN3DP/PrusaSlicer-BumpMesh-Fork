@@ -51,6 +51,8 @@ struct ProjectionSettings
     double scale_v = 1.0;
     double offset_u = 0.0;
     double offset_v = 0.0;
+    double rotation_radians = 0.0;
+    bool repeat = false;
     bool clamp = true;
 };
 

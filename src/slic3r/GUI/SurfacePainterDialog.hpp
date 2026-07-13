@@ -92,6 +92,7 @@ private:
     bool m_committed = false;
     bool m_canvas_events_bound = false;
     bool m_dragging_placement = false;
+    bool m_rotating_placement = false;
     wxPoint m_last_mouse_position;
     unsigned int m_num_physical = 0;
     std::vector<std::string> m_physical_colors;
@@ -116,6 +117,8 @@ private:
     wxSpinCtrlDouble* m_scale_v{nullptr};
     wxSpinCtrlDouble* m_offset_u{nullptr};
     wxSpinCtrlDouble* m_offset_v{nullptr};
+    wxSpinCtrlDouble* m_rotation_degrees{nullptr};
+    wxCheckBox* m_repeat_image{nullptr};
     wxCheckBox* m_mouse_placement{nullptr};
     wxListBox* m_palette_list{nullptr};
     wxStaticText* m_result_label{nullptr};
@@ -148,6 +151,7 @@ private:
     void bind_canvas_events();
     void unbind_canvas_events();
     void set_spin_value_clamped(wxSpinCtrlDouble* spin, double value);
+    int detected_image_color_count() const;
     size_t apply_to_volume(ModelVolume& volume, const indexed_triangle_set* source_mesh) const;
     unsigned int next_virtual_id() const;
 };

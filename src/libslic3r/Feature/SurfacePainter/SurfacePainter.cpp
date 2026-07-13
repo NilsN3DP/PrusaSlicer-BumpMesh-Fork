@@ -25,15 +25,37 @@ double wrap01(double value)
     return value < 0.0 ? value + 1.0 : value;
 }
 
-double resolve_uv_component(double value, bool clamp)
-{
-    return clamp ? clamp01(value) : wrap01(value);
-}
-
 double apply_uv_transform(double value, double scale, double offset)
 {
     const double safe_scale = std::abs(scale) < EPSILON ? 1.0 : scale;
     return (value - offset) / safe_scale;
+}
+
+UV apply_uv_transform(UV uv, const ProjectionSettings& settings)
+{
+    uv.u = apply_uv_transform(uv.u, settings.scale_u, settings.offset_u);
+    uv.v = apply_uv_transform(uv.v, settings.scale_v, settings.offset_v);
+
+    if (std::abs(settings.rotation_radians) > EPSILON) {
+        const double c = std::cos(settings.rotation_radians);
+        const double s = std::sin(settings.rotation_radians);
+        const double du = uv.u - 0.5;
+        const double dv = uv.v - 0.5;
+        uv.u = 0.5 + c * du - s * dv;
+        uv.v = 0.5 + s * du + c * dv;
+    }
+
+    const bool wrap = settings.repeat || !settings.clamp;
+    if (wrap) {
+        uv.u = wrap01(uv.u);
+        uv.v = wrap01(uv.v);
+    }
+    return uv;
+}
+
+bool uv_inside_bitmap(const UV& uv)
+{
+    return uv.u >= 0.0 && uv.u <= 1.0 && uv.v >= 0.0 && uv.v <= 1.0;
 }
 
 int color_distance_sq(const ColorRGBA& a, const ColorRGBA& b)
@@ -92,9 +114,7 @@ UV project_point(const SurfacePoint& point, const ProjectionSettings& settings)
     }
     }
 
-    uv.u = resolve_uv_component(apply_uv_transform(uv.u, settings.scale_u, settings.offset_u), settings.clamp);
-    uv.v = resolve_uv_component(apply_uv_transform(uv.v, settings.scale_v, settings.offset_v), settings.clamp);
-    return uv;
+    return apply_uv_transform(uv, settings);
 }
 
 std::optional<size_t> nearest_palette_index(
@@ -136,6 +156,9 @@ std::vector<PaintedSample> paint_surface_points(
 
     for (const SurfacePoint& point : points) {
         const UV uv = project_point(point, projection);
+        if (!projection.repeat && projection.clamp && !uv_inside_bitmap(uv))
+            continue;
+
         const ColorRGBA source_color = bitmap.sample_nearest(uv.u, uv.v);
         const std::optional<size_t> palette_index = nearest_palette_index(source_color, palette, alpha_threshold);
         if (!palette_index)

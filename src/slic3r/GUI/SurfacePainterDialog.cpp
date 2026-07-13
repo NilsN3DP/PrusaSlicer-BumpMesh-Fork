@@ -68,15 +68,17 @@ struct RefinedMesh
     size_t subdivisions = 1;
 };
 
-size_t subdivision_factor_for(const indexed_triangle_set& mesh, const SurfacePainter::Bitmap& bitmap)
+size_t subdivision_factor_for(const indexed_triangle_set& mesh, const SurfacePainter::Bitmap& bitmap, int detail_level)
 {
     if (mesh.indices.empty())
         return 1;
 
-    const size_t max_facets = 160000;
-    const size_t image_hint = std::max<size_t>(1, std::min<size_t>(32, std::max(bitmap.width, bitmap.height) / 32));
+    const size_t detail = size_t(std::clamp(detail_level, 1, 10));
+    const size_t max_facets = 40000 + detail * detail * 20000;
+    const size_t image_divisor = std::max<size_t>(4, 96 - detail * 8);
+    const size_t image_hint = std::max<size_t>(1, std::min<size_t>(64, std::max(bitmap.width, bitmap.height) / image_divisor));
     const size_t budget_hint = std::max<size_t>(1, static_cast<size_t>(std::sqrt(double(max_facets) / double(mesh.indices.size()))));
-    return std::clamp(std::min(image_hint, budget_hint), size_t(1), size_t(16));
+    return std::clamp(std::min(image_hint, budget_hint), size_t(1), size_t(64));
 }
 
 int add_vertex(indexed_triangle_set& out, const Vec3f& vertex)
@@ -85,10 +87,10 @@ int add_vertex(indexed_triangle_set& out, const Vec3f& vertex)
     return int(out.vertices.size() - 1);
 }
 
-RefinedMesh refine_mesh_for_surface_painting(const indexed_triangle_set& input, const SurfacePainter::Bitmap& bitmap)
+RefinedMesh refine_mesh_for_surface_painting(const indexed_triangle_set& input, const SurfacePainter::Bitmap& bitmap, int detail_level)
 {
     RefinedMesh refined;
-    refined.subdivisions = subdivision_factor_for(input, bitmap);
+    refined.subdivisions = subdivision_factor_for(input, bitmap, detail_level);
     if (refined.subdivisions <= 1) {
         refined.mesh = input;
         return refined;
@@ -240,7 +242,14 @@ void SurfacePainterDialog::build_layout()
     m_palette_size->SetRange(2, 16);
     m_palette_size->SetValue(6);
     m_palette_size->Bind(wxEVT_SPINCTRL, &SurfacePainterDialog::on_controls_changed, this);
-    settings->Add(m_palette_size, 0);
+    settings->Add(m_palette_size, 0, wxRIGHT, 14);
+
+    settings->Add(new wxStaticText(this, wxID_ANY, _L("Detail")), 0, wxALIGN_CENTER_VERTICAL | wxRIGHT, 6);
+    m_detail_level = new wxSpinCtrl(this, wxID_ANY);
+    m_detail_level->SetRange(1, 10);
+    m_detail_level->SetValue(4);
+    m_detail_level->Bind(wxEVT_SPINCTRL, &SurfacePainterDialog::on_controls_changed, this);
+    settings->Add(m_detail_level, 0);
     root->Add(settings, 0, wxEXPAND | wxLEFT | wxRIGHT | wxBOTTOM, 12);
 
     auto* transform = new wxBoxSizer(wxHORIZONTAL);
@@ -491,10 +500,11 @@ void SurfacePainterDialog::refresh_result_ui()
         m_generated_virtual_extruders.clear();
 
     m_result_label->SetLabel(wxString::Format(
-        _L("Surface Painter core sampled %zu surface points. Projection: %s. Target mode: %s."),
+        _L("Surface Painter core sampled %zu surface points. Projection: %s. Target mode: %s. Detail: %d."),
         m_samples.size(),
         m_projection_choice->GetStringSelection(),
-        m_target_choice->GetStringSelection()
+        m_target_choice->GetStringSelection(),
+        detail_level()
     ));
     m_result_label->Wrap(440);
     this->Layout();
@@ -640,7 +650,7 @@ size_t SurfacePainterDialog::apply_to_volume(ModelVolume& volume) const
     if (!m_bitmap.valid() || m_palette.empty() || volume.mesh().empty())
         return 0;
 
-    RefinedMesh refined = refine_mesh_for_surface_painting(volume.mesh().its, m_bitmap);
+    RefinedMesh refined = refine_mesh_for_surface_painting(volume.mesh().its, m_bitmap, detail_level());
     if (refined.subdivisions > 1) {
         volume.set_mesh(std::move(refined.mesh));
         volume.calculate_convex_hull();
@@ -662,6 +672,11 @@ size_t SurfacePainterDialog::apply_to_volume(ModelVolume& volume) const
     volume.mm_segmentation_facets.set(selector);
 
     return painted.size();
+}
+
+int SurfacePainterDialog::detail_level() const
+{
+    return m_detail_level ? m_detail_level->GetValue() : 4;
 }
 
 unsigned int SurfacePainterDialog::next_virtual_id() const

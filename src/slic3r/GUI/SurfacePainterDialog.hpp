@@ -75,6 +75,7 @@ private:
     wxChoice* m_projection_choice{nullptr};
     wxChoice* m_target_choice{nullptr};
     wxSpinCtrl* m_palette_size{nullptr};
+    wxSpinCtrl* m_detail_level{nullptr};
     wxSpinCtrlDouble* m_scale_u{nullptr};
     wxSpinCtrlDouble* m_scale_v{nullptr};
     wxSpinCtrlDouble* m_offset_u{nullptr};
@@ -102,6 +103,7 @@ private:
     std::vector<SurfacePainter::ColorTarget> color_targets() const;
     std::vector<SurfacePainter::SurfacePoint> make_probe_points() const;
     std::vector<SurfacePainter::SurfacePoint> make_volume_points(const ModelVolume& volume) const;
+    int detail_level() const;
     unsigned int next_virtual_id() const;
 };
 

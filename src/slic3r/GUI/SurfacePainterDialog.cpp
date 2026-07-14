@@ -536,7 +536,7 @@ void SurfacePainterDialog::on_canvas_mouse(wxMouseEvent& event)
         m_rotating_placement = false;
         m_last_mouse_position = event.GetPosition();
         m_last_drag_preview_time = std::chrono::steady_clock::time_point{};
-        center_decal_at_mouse(m_last_mouse_position);
+        center_decal_at_mouse(m_last_mouse_position, true);
         refresh_after_transform_change();
         if (event_window != nullptr && !event_window->HasCapture())
             event_window->CaptureMouse();
@@ -576,7 +576,7 @@ void SurfacePainterDialog::on_canvas_mouse(wxMouseEvent& event)
         m_last_mouse_position = position;
 
         const wxSize size = event_window != nullptr ? event_window->GetClientSize() : wxSize(1000, 800);
-        if (!center_decal_at_mouse(position)) {
+        if (!center_decal_at_mouse(position, false)) {
             const double modifier = event.ControlDown() ? 4.0 : (event.ShiftDown() ? 0.2 : 1.0);
             const double u_step = 2.5 * std::max(0.05, m_scale_u->GetValue()) * modifier / double(std::max(1, size.GetWidth()));
             const double v_step = 2.5 * std::max(0.05, m_scale_v->GetValue()) * modifier / double(std::max(1, size.GetHeight()));
@@ -1136,7 +1136,7 @@ std::optional<SurfacePainter::UV> SurfacePainterDialog::surface_uv_at_mouse(cons
     if (!indices)
         return std::nullopt;
 
-    const std::optional<Vec3d> local_hit = m_canvas->mouse_hit_on_model_volume(
+    const std::optional<GLCanvas3D::ModelVolumeHit> local_hit = m_canvas->mouse_hit_on_model_volume(
         Point(position.x, position.y),
         indices->first,
         indices->second
@@ -1154,13 +1154,26 @@ std::optional<SurfacePainter::UV> SurfacePainterDialog::surface_uv_at_mouse(cons
     projection.clamp = true;
 
     return SurfacePainter::project_point(
-        SurfacePainter::SurfacePoint{ *local_hit, Vec3d::UnitZ(), 0 },
+        SurfacePainter::SurfacePoint{ local_hit->position, local_hit->normal, 0 },
         projection
     );
 }
 
-bool SurfacePainterDialog::center_decal_at_mouse(const wxPoint& position)
+bool SurfacePainterDialog::center_decal_at_mouse(const wxPoint& position, bool auto_projection)
 {
+    if (auto_projection && m_canvas != nullptr) {
+        const std::optional<std::pair<int, int>> indices = target_volume_indices();
+        if (indices) {
+            const std::optional<GLCanvas3D::ModelVolumeHit> local_hit = m_canvas->mouse_hit_on_model_volume(
+                Point(position.x, position.y),
+                indices->first,
+                indices->second
+            );
+            if (local_hit)
+                set_projection_from_normal(local_hit->normal);
+        }
+    }
+
     const std::optional<SurfacePainter::UV> uv = surface_uv_at_mouse(position);
     if (!uv)
         return false;
@@ -1175,6 +1188,22 @@ void SurfacePainterDialog::center_decal_at_uv(const SurfacePainter::UV& uv)
     const double scale_v = m_scale_v != nullptr ? m_scale_v->GetValue() : 0.45;
     set_spin_value_clamped(m_offset_u, uv.u - 0.5 * scale_u);
     set_spin_value_clamped(m_offset_v, uv.v - 0.5 * scale_v);
+}
+
+void SurfacePainterDialog::set_projection_from_normal(const Vec3d& normal)
+{
+    if (m_projection_choice == nullptr || m_projection_choice->GetSelection() == 3)
+        return;
+
+    const Vec3d abs_normal(std::abs(normal.x()), std::abs(normal.y()), std::abs(normal.z()));
+    int selection = 0;
+    if (abs_normal.x() >= abs_normal.y() && abs_normal.x() >= abs_normal.z())
+        selection = 2;
+    else if (abs_normal.y() >= abs_normal.z())
+        selection = 1;
+
+    if (m_projection_choice->GetSelection() != selection)
+        m_projection_choice->SetSelection(selection);
 }
 
 void SurfacePainterDialog::fit_image_to_decal()

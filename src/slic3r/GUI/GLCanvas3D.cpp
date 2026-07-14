@@ -4756,7 +4756,7 @@ Linef3 GLCanvas3D::mouse_ray(const Point& mouse_pos)
     return Linef3(_mouse_to_3d(mouse_pos, &z0), _mouse_to_3d(mouse_pos, &z1));
 }
 
-std::optional<Vec3d> GLCanvas3D::mouse_hit_on_model_volume(const Point& mouse_pos, int object_idx, int volume_idx) const
+std::optional<GLCanvas3D::ModelVolumeHit> GLCanvas3D::mouse_hit_on_model_volume(const Point& mouse_pos, int object_idx, int volume_idx) const
 {
     const SceneRaycaster::HitResult hit = m_scene_raycaster.hit(mouse_pos.cast<double>(), wxGetApp().plater()->get_camera(), nullptr);
     if (!hit.is_valid() || hit.type != SceneRaycaster::EType::Volume ||
@@ -4767,7 +4767,11 @@ std::optional<Vec3d> GLCanvas3D::mouse_hit_on_model_volume(const Point& mouse_po
     if (gl_volume == nullptr || gl_volume->object_idx() != object_idx || gl_volume->volume_idx() != volume_idx)
         return std::nullopt;
 
-    return gl_volume->world_matrix().inverse() * hit.position.cast<double>();
+    const Transform3d world = gl_volume->world_matrix();
+    return ModelVolumeHit{
+        world.inverse() * hit.position.cast<double>(),
+        (world.matrix().block(0, 0, 3, 3).transpose() * hit.normal.cast<double>()).normalized(),
+    };
 }
 
 double GLCanvas3D::get_size_proportional_to_max_bed_size(double factor) const

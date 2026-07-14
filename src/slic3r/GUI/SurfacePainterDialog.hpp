@@ -166,8 +166,9 @@ private:
     void set_transform_values(double scale_u, double scale_v, double offset_u, double offset_v, double rotation_degrees);
     std::optional<std::pair<int, int>> target_volume_indices() const;
     std::optional<SurfacePainter::UV> surface_uv_at_mouse(const wxPoint& position) const;
-    bool center_decal_at_mouse(const wxPoint& position);
+    bool center_decal_at_mouse(const wxPoint& position, bool auto_projection);
     void center_decal_at_uv(const SurfacePainter::UV& uv);
+    void set_projection_from_normal(const Vec3d& normal);
     void fit_image_to_decal();
     void center_image_in_decal();
     int detected_image_color_count() const;

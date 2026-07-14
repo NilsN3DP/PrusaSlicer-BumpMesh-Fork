@@ -168,7 +168,8 @@ private:
     std::optional<SurfacePainter::UV> surface_uv_at_mouse(const wxPoint& position) const;
     bool center_decal_at_mouse(const wxPoint& position, bool auto_projection);
     void center_decal_at_uv(const SurfacePainter::UV& uv);
-    void set_projection_from_normal(const Vec3d& normal);
+    void set_projection_from_hit(const Vec3d& position, const Vec3d& normal);
+    bool hit_looks_cylindrical(const Vec3d& position, const Vec3d& normal) const;
     void fit_image_to_decal();
     void center_image_in_decal();
     int detected_image_color_count() const;

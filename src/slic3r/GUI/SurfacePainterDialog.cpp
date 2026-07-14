@@ -1170,7 +1170,7 @@ bool SurfacePainterDialog::center_decal_at_mouse(const wxPoint& position, bool a
                 indices->second
             );
             if (local_hit)
-                set_projection_from_normal(local_hit->normal);
+                set_projection_from_hit(local_hit->position, local_hit->normal);
         }
     }
 
@@ -1190,9 +1190,20 @@ void SurfacePainterDialog::center_decal_at_uv(const SurfacePainter::UV& uv)
     set_spin_value_clamped(m_offset_v, uv.v - 0.5 * scale_v);
 }
 
-void SurfacePainterDialog::set_projection_from_normal(const Vec3d& normal)
+void SurfacePainterDialog::set_projection_from_hit(const Vec3d& position, const Vec3d& normal)
 {
-    if (m_projection_choice == nullptr || m_projection_choice->GetSelection() == 3)
+    if (m_projection_choice == nullptr)
+        return;
+
+    if (hit_looks_cylindrical(position, normal)) {
+        if (m_projection_choice->GetSelection() != 3) {
+            m_projection_choice->SetSelection(3);
+            fit_image_to_decal();
+        }
+        return;
+    }
+
+    if (m_projection_choice->GetSelection() == 3)
         return;
 
     const Vec3d abs_normal(std::abs(normal.x()), std::abs(normal.y()), std::abs(normal.z()));
@@ -1206,13 +1217,54 @@ void SurfacePainterDialog::set_projection_from_normal(const Vec3d& normal)
         m_projection_choice->SetSelection(selection);
 }
 
+bool SurfacePainterDialog::hit_looks_cylindrical(const Vec3d& position, const Vec3d& normal) const
+{
+    if (m_target_volume == nullptr || m_target_volume->mesh().empty())
+        return false;
+
+    const BoundingBoxf3 bbox = m_target_volume->mesh().bounding_box();
+    const Vec3d size = bbox.size();
+    if (size.x() <= 1e-6 || size.y() <= 1e-6 || size.z() <= 1e-6)
+        return false;
+
+    const double xy_ratio = std::min(size.x(), size.y()) / std::max(size.x(), size.y());
+    if (xy_ratio < 0.72)
+        return false;
+
+    const Vec2d radial(position.x() - bbox.center().x(), position.y() - bbox.center().y());
+    if (radial.squaredNorm() <= 1e-8)
+        return false;
+
+    const Vec2d radial_normal = radial.normalized();
+    const Vec2d surface_normal(normal.x(), normal.y());
+    if (surface_normal.squaredNorm() <= 1e-8)
+        return false;
+
+    const double horizontal_normal = surface_normal.norm();
+    const double radial_alignment = std::abs(surface_normal.normalized().dot(radial_normal));
+    return horizontal_normal > 0.72 && radial_alignment > 0.82;
+}
+
 void SurfacePainterDialog::fit_image_to_decal()
 {
     double scale_u = 0.45;
     double scale_v = 0.45;
     if (m_bitmap.valid() && m_bitmap.width > 0 && m_bitmap.height > 0) {
         const double aspect = double(m_bitmap.width) / double(m_bitmap.height);
-        if (aspect >= 1.0)
+        if (m_target_volume != nullptr && projection_settings().mode == SurfacePainter::ProjectionMode::CylindricalZ) {
+            const SurfacePainter::ProjectionSettings projection = projection_settings_for_volume(*m_target_volume);
+            const double circumference = 2.0 * PI * projection.cylinder_radius;
+            const double height = std::max(1e-6, projection.size.z());
+            double physical_width = std::min(0.35 * circumference, 0.70 * height * aspect);
+            double physical_height = physical_width / aspect;
+            if (physical_height > 0.75 * height) {
+                physical_height = 0.75 * height;
+                physical_width = physical_height * aspect;
+            }
+
+            scale_u = std::clamp(physical_width / std::max(1e-6, circumference), 0.02, 0.95);
+            scale_v = std::clamp(physical_height / height, 0.02, 0.95);
+        } else if (aspect >= 1.0)
             scale_v = scale_u / aspect;
         else
             scale_u = scale_v * aspect;

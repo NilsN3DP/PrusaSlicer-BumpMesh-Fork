@@ -536,6 +536,8 @@ void SurfacePainterDialog::on_canvas_mouse(wxMouseEvent& event)
         m_rotating_placement = false;
         m_last_mouse_position = event.GetPosition();
         m_last_drag_preview_time = std::chrono::steady_clock::time_point{};
+        center_decal_at_mouse(m_last_mouse_position);
+        refresh_after_transform_change();
         if (event_window != nullptr && !event_window->HasCapture())
             event_window->CaptureMouse();
         return;
@@ -574,11 +576,13 @@ void SurfacePainterDialog::on_canvas_mouse(wxMouseEvent& event)
         m_last_mouse_position = position;
 
         const wxSize size = event_window != nullptr ? event_window->GetClientSize() : wxSize(1000, 800);
-        const double modifier = event.ControlDown() ? 4.0 : (event.ShiftDown() ? 0.2 : 1.0);
-        const double u_step = 2.5 * std::max(0.05, m_scale_u->GetValue()) * modifier / double(std::max(1, size.GetWidth()));
-        const double v_step = 2.5 * std::max(0.05, m_scale_v->GetValue()) * modifier / double(std::max(1, size.GetHeight()));
-        set_spin_value_clamped(m_offset_u, m_offset_u->GetValue() - double(dx) * u_step);
-        set_spin_value_clamped(m_offset_v, m_offset_v->GetValue() + double(dy) * v_step);
+        if (!center_decal_at_mouse(position)) {
+            const double modifier = event.ControlDown() ? 4.0 : (event.ShiftDown() ? 0.2 : 1.0);
+            const double u_step = 2.5 * std::max(0.05, m_scale_u->GetValue()) * modifier / double(std::max(1, size.GetWidth()));
+            const double v_step = 2.5 * std::max(0.05, m_scale_v->GetValue()) * modifier / double(std::max(1, size.GetHeight()));
+            set_spin_value_clamped(m_offset_u, m_offset_u->GetValue() - double(dx) * u_step);
+            set_spin_value_clamped(m_offset_v, m_offset_v->GetValue() + double(dy) * v_step);
+        }
         refresh_after_transform_change();
         return;
     }
@@ -596,12 +600,15 @@ void SurfacePainterDialog::on_canvas_mouse(wxMouseEvent& event)
     }
 
     if (event.GetWheelRotation() != 0) {
+        const std::optional<SurfacePainter::UV> anchor = surface_uv_at_mouse(event.GetPosition());
         const int delta = event.GetWheelDelta() == 0 ? 120 : event.GetWheelDelta();
         const double steps = double(event.GetWheelRotation()) / double(delta);
         const double base = event.ControlDown() ? 1.35 : (event.ShiftDown() ? 1.03 : 1.15);
         const double factor = std::pow(base, steps);
         set_spin_value_clamped(m_scale_u, m_scale_u->GetValue() * factor);
         set_spin_value_clamped(m_scale_v, m_scale_v->GetValue() * factor);
+        if (anchor)
+            center_decal_at_uv(*anchor);
         refresh_after_transform_change();
         return;
     }
@@ -1103,6 +1110,71 @@ void SurfacePainterDialog::set_transform_values(
     set_spin_value_clamped(m_offset_u, offset_u);
     set_spin_value_clamped(m_offset_v, offset_v);
     set_spin_value_clamped(m_rotation_degrees, rotation_degrees);
+}
+
+std::optional<std::pair<int, int>> SurfacePainterDialog::target_volume_indices() const
+{
+    if (m_target_volume == nullptr)
+        return std::nullopt;
+
+    for (size_t object_idx = 0; object_idx < m_model.objects.size(); ++object_idx) {
+        const ModelObject* object = m_model.objects[object_idx];
+        for (size_t volume_idx = 0; volume_idx < object->volumes.size(); ++volume_idx)
+            if (object->volumes[volume_idx] == m_target_volume)
+                return std::make_pair(static_cast<int>(object_idx), static_cast<int>(volume_idx));
+    }
+
+    return std::nullopt;
+}
+
+std::optional<SurfacePainter::UV> SurfacePainterDialog::surface_uv_at_mouse(const wxPoint& position) const
+{
+    if (m_canvas == nullptr || m_target_volume == nullptr)
+        return std::nullopt;
+
+    const std::optional<std::pair<int, int>> indices = target_volume_indices();
+    if (!indices)
+        return std::nullopt;
+
+    const std::optional<Vec3d> local_hit = m_canvas->mouse_hit_on_model_volume(
+        Point(position.x, position.y),
+        indices->first,
+        indices->second
+    );
+    if (!local_hit)
+        return std::nullopt;
+
+    SurfacePainter::ProjectionSettings projection = projection_settings_for_volume(*m_target_volume);
+    projection.scale_u = 1.0;
+    projection.scale_v = 1.0;
+    projection.offset_u = 0.0;
+    projection.offset_v = 0.0;
+    projection.rotation_radians = 0.0;
+    projection.repeat = false;
+    projection.clamp = true;
+
+    return SurfacePainter::project_point(
+        SurfacePainter::SurfacePoint{ *local_hit, Vec3d::UnitZ(), 0 },
+        projection
+    );
+}
+
+bool SurfacePainterDialog::center_decal_at_mouse(const wxPoint& position)
+{
+    const std::optional<SurfacePainter::UV> uv = surface_uv_at_mouse(position);
+    if (!uv)
+        return false;
+
+    center_decal_at_uv(*uv);
+    return true;
+}
+
+void SurfacePainterDialog::center_decal_at_uv(const SurfacePainter::UV& uv)
+{
+    const double scale_u = m_scale_u != nullptr ? m_scale_u->GetValue() : 0.45;
+    const double scale_v = m_scale_v != nullptr ? m_scale_v->GetValue() : 0.45;
+    set_spin_value_clamped(m_offset_u, uv.u - 0.5 * scale_u);
+    set_spin_value_clamped(m_offset_v, uv.v - 0.5 * scale_v);
 }
 
 void SurfacePainterDialog::fit_image_to_decal()

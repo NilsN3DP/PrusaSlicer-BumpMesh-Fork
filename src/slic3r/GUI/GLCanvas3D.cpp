@@ -4756,6 +4756,20 @@ Linef3 GLCanvas3D::mouse_ray(const Point& mouse_pos)
     return Linef3(_mouse_to_3d(mouse_pos, &z0), _mouse_to_3d(mouse_pos, &z1));
 }
 
+std::optional<Vec3d> GLCanvas3D::mouse_hit_on_model_volume(const Point& mouse_pos, int object_idx, int volume_idx) const
+{
+    const SceneRaycaster::HitResult hit = m_scene_raycaster.hit(mouse_pos.cast<double>(), wxGetApp().plater()->get_camera(), nullptr);
+    if (!hit.is_valid() || hit.type != SceneRaycaster::EType::Volume ||
+        hit.raycaster_id < 0 || hit.raycaster_id >= static_cast<int>(m_volumes.volumes.size()))
+        return std::nullopt;
+
+    const GLVolume* gl_volume = m_volumes.volumes[hit.raycaster_id];
+    if (gl_volume == nullptr || gl_volume->object_idx() != object_idx || gl_volume->volume_idx() != volume_idx)
+        return std::nullopt;
+
+    return gl_volume->world_matrix().inverse() * hit.position.cast<double>();
+}
+
 double GLCanvas3D::get_size_proportional_to_max_bed_size(double factor) const
 {
     const BoundingBoxf& bbox = m_bed.build_volume().bounding_volume2d();

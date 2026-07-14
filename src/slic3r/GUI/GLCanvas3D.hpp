@@ -10,6 +10,7 @@
 #include <memory>
 #include <chrono>
 #include <cstdint>
+#include <optional>
 
 #include "GLToolbar.hpp"
 #include "Event.hpp"
@@ -917,6 +918,7 @@ public:
 
     // Returns the view ray line, in world coordinate, at the given mouse position.
     Linef3 mouse_ray(const Point& mouse_pos);
+    std::optional<Vec3d> mouse_hit_on_model_volume(const Point& mouse_pos, int object_idx, int volume_idx) const;
 
     bool is_mouse_dragging() const { return m_mouse.dragging; }
 

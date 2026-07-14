@@ -379,7 +379,12 @@ void SurfacePainterDialog::build_layout()
     m_mouse_placement->Bind(wxEVT_CHECKBOX, &SurfacePainterDialog::on_controls_changed, this);
     m_mouse_placement->Enable(m_target_volume != nullptr && m_canvas != nullptr);
     m_mouse_placement->SetValue(m_target_volume != nullptr && m_canvas != nullptr);
-    preview_row->Add(m_mouse_placement, 0, wxALIGN_CENTER_VERTICAL);
+    preview_row->Add(m_mouse_placement, 0, wxALIGN_CENTER_VERTICAL | wxRIGHT, 12);
+    m_preview_while_placing = new wxCheckBox(this, wxID_ANY, _L("Preview while placing"));
+    m_preview_while_placing->Bind(wxEVT_CHECKBOX, &SurfacePainterDialog::on_controls_changed, this);
+    m_preview_while_placing->Enable(m_target_volume != nullptr && m_canvas != nullptr);
+    m_preview_while_placing->SetValue(false);
+    preview_row->Add(m_preview_while_placing, 0, wxALIGN_CENTER_VERTICAL);
     root->Add(preview_row, 0, wxEXPAND | wxLEFT | wxRIGHT | wxBOTTOM, 12);
 
     auto* body = new wxBoxSizer(wxHORIZONTAL);
@@ -467,11 +472,14 @@ void SurfacePainterDialog::on_preview(wxCommandEvent&)
         return;
 
     ensure_preview_virtual_extruders();
-    const size_t painted = apply_to_volume(*m_target_volume, m_original_mesh ? &*m_original_mesh : nullptr);
-    m_last_painted_facets = painted;
+    const bool keep_existing_on_empty = m_fast_preview || m_dragging_placement || m_rotating_placement;
+    const size_t painted = apply_to_volume(*m_target_volume, m_original_mesh ? &*m_original_mesh : nullptr, keep_existing_on_empty);
+    const bool kept_previous_preview = keep_existing_on_empty && painted == 0 && m_last_painted_facets > 0;
+    if (!kept_previous_preview)
+        m_last_painted_facets = painted;
     m_preview_was_applied = true;
     if (m_preview_callback)
-        m_preview_callback(painted);
+        m_preview_callback(kept_previous_preview ? m_last_painted_facets : painted);
 }
 
 void SurfacePainterDialog::on_apply(wxCommandEvent&)
@@ -544,18 +552,18 @@ void SurfacePainterDialog::on_canvas_mouse(wxMouseEvent& event)
     }
 
     if (event.LeftUp()) {
-        m_dragging_placement = false;
         if (event_window != nullptr && event_window->HasCapture())
             event_window->ReleaseMouse();
         refresh_after_transform_change(true);
+        m_dragging_placement = false;
         return;
     }
 
     if (event.RightUp()) {
-        m_rotating_placement = false;
         if (event_window != nullptr && event_window->HasCapture())
             event_window->ReleaseMouse();
         refresh_after_transform_change(true);
+        m_rotating_placement = false;
         return;
     }
 
@@ -936,22 +944,32 @@ size_t SurfacePainterDialog::apply_to_volume(ModelVolume& volume) const
 
 size_t SurfacePainterDialog::apply_to_volume(ModelVolume& volume, const indexed_triangle_set* source_mesh) const
 {
+    return apply_to_volume(volume, source_mesh, false);
+}
+
+size_t SurfacePainterDialog::apply_to_volume(ModelVolume& volume, const indexed_triangle_set* source_mesh, bool keep_existing_on_empty) const
+{
     if (!m_bitmap.valid() || m_palette.empty() || volume.mesh().empty())
         return 0;
 
     const indexed_triangle_set& base_mesh = source_mesh != nullptr ? *source_mesh : volume.mesh().its;
     RefinedMesh refined = refine_mesh_for_surface_painting(base_mesh, m_bitmap, detail_level());
-    volume.set_mesh(std::move(refined.mesh));
-    volume.calculate_convex_hull();
-    volume.set_new_unique_id();
+    const SurfacePainter::ProjectionSettings projection = projection_settings_for_volume(volume);
 
     std::vector<SurfacePainter::PaintedSample> painted = SurfacePainter::paint_surface_points(
-        make_volume_points(volume.mesh().its),
+        make_volume_points(refined.mesh),
         m_bitmap,
-        projection_settings_for_volume(volume),
+        projection,
         color_targets(),
         16
     );
+
+    if (painted.empty() && keep_existing_on_empty)
+        return 0;
+
+    volume.set_mesh(std::move(refined.mesh));
+    volume.calculate_convex_hull();
+    volume.set_new_unique_id();
 
     TriangleSelector selector(volume.mesh());
     for (const SurfacePainter::PaintedSample& sample : painted)
@@ -992,8 +1010,7 @@ int SurfacePainterDialog::detail_level() const
 void SurfacePainterDialog::apply_preview_if_enabled(bool force)
 {
     const bool live_preview = m_live_preview != nullptr && m_live_preview->GetValue();
-    const bool mouse_preview = m_mouse_placement != nullptr && m_mouse_placement->GetValue();
-    if (!force && !live_preview && !mouse_preview)
+    if (!force && !live_preview)
         return;
 
     wxCommandEvent event;
@@ -1007,6 +1024,14 @@ void SurfacePainterDialog::refresh_after_transform_change(bool force)
 
     const bool interactive_drag = m_dragging_placement || m_rotating_placement;
     if (interactive_drag && !force) {
+        const bool preview_while_placing = m_preview_while_placing != nullptr && m_preview_while_placing->GetValue();
+        if (!preview_while_placing) {
+            run_projection_probe();
+            refresh_result_ui();
+            m_fast_preview = false;
+            return;
+        }
+
         const auto now = std::chrono::steady_clock::now();
         if (m_last_drag_preview_time.time_since_epoch().count() != 0 &&
             now - m_last_drag_preview_time < std::chrono::milliseconds(80))

@@ -126,6 +126,7 @@ private:
     wxSpinCtrlDouble* m_rotation_degrees{nullptr};
     wxCheckBox* m_repeat_image{nullptr};
     wxCheckBox* m_mouse_placement{nullptr};
+    wxCheckBox* m_preview_while_placing{nullptr};
     wxListBox* m_palette_list{nullptr};
     wxStaticText* m_result_label{nullptr};
     wxButton* m_apply_button{nullptr};
@@ -167,6 +168,7 @@ private:
     void center_image_in_decal();
     int detected_image_color_count() const;
     size_t apply_to_volume(ModelVolume& volume, const indexed_triangle_set* source_mesh) const;
+    size_t apply_to_volume(ModelVolume& volume, const indexed_triangle_set* source_mesh, bool keep_existing_on_empty) const;
     unsigned int next_virtual_id() const;
 };
 

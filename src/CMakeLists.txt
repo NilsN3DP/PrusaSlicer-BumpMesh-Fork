@@ -193,6 +193,7 @@ if (WIN32)
     add_dependencies(PrusaSlicer_app_gui PrusaSlicer)
     set_target_properties(PrusaSlicer_app_gui PROPERTIES OUTPUT_NAME "prusa-slicer")
     target_link_libraries(PrusaSlicer_app_gui PRIVATE boost_headeronly)
+    prusaslicer_copy_dlls(PrusaSlicer_app_gui)
 
     add_executable(PrusaSlicer_app_console PrusaSlicer_app_msvc.cpp ${CMAKE_CURRENT_BINARY_DIR}/PrusaSlicer.rc)
     # Generate debug symbols even in release mode.
@@ -203,6 +204,7 @@ if (WIN32)
     add_dependencies(PrusaSlicer_app_console PrusaSlicer)
     set_target_properties(PrusaSlicer_app_console PROPERTIES OUTPUT_NAME "prusa-slicer-console")
     target_link_libraries(PrusaSlicer_app_console PRIVATE boost_headeronly)
+    prusaslicer_copy_dlls(PrusaSlicer_app_console)
 
     add_executable(PrusaSlicer_app_gcodeviewer WIN32 PrusaSlicer_app_msvc.cpp ${CMAKE_CURRENT_BINARY_DIR}/PrusaSlicer-gcodeviewer.rc)
     # Generate debug symbols even in release mode.
@@ -213,6 +215,7 @@ if (WIN32)
     add_dependencies(PrusaSlicer_app_gcodeviewer PrusaSlicer)
     set_target_properties(PrusaSlicer_app_gcodeviewer PROPERTIES OUTPUT_NAME "prusa-gcodeviewer")
     target_link_libraries(PrusaSlicer_app_gcodeviewer PRIVATE boost_headeronly)
+    prusaslicer_copy_dlls(PrusaSlicer_app_gcodeviewer)
 endif ()
 
 # Link the resources dir to where Slic3r GUI expects it

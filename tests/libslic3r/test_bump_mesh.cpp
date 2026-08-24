@@ -263,6 +263,28 @@ TEST_CASE("Bump mesh direct include and exclude masks can be combined", "[BumpMe
     REQUIRE(saw_untouched_wall);
 }
 
+TEST_CASE("Bump mesh direct include mask overrides side checkboxes", "[BumpMesh]")
+{
+    indexed_triangle_set input = make_yz_quad_px();
+    BumpMesh::Texture texture;
+    texture.width = 1;
+    texture.height = 1;
+    texture.gray = {1.f};
+
+    BumpMesh::Settings settings;
+    settings.amplitude = 0.8f;
+    settings.symmetric = false;
+    settings.max_edge_length = 10.f;
+    settings.apply_dir = {false, false, false, false, false, false};
+    settings.include_face_mask = {1, 1};
+
+    indexed_triangle_set output = BumpMesh::bake_displacement(input, texture, settings);
+
+    REQUIRE(output.vertices.size() == input.vertices.size());
+    for (const Vec3f &v : output.vertices)
+        REQUIRE(v.x() == Catch::Approx(0.8f).margin(1e-5f));
+}
+
 TEST_CASE("Bump mesh bake reports source faces for subdivided output", "[BumpMesh]")
 {
     indexed_triangle_set input = make_xy_quad();

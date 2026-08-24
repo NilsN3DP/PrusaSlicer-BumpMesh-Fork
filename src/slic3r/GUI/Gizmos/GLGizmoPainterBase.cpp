@@ -568,6 +568,7 @@ bool GLGizmoPainterBase::gizmo_event(SLAGizmoEventType action, const Vec2d& mous
                     }
 
                     m_triangle_selectors[m_rr.mesh_id]->request_update_render_data();
+                    this->on_painting_changed(true);
                     m_seed_fill_last_mesh_id = m_rr.mesh_id;
                 }
                 return true;
@@ -695,6 +696,7 @@ bool GLGizmoPainterBase::gizmo_event(SLAGizmoEventType action, const Vec2d& mous
             }
 
             m_triangle_selectors[mesh_idx]->request_update_render_data();
+            this->on_painting_changed(false);
             m_last_mouse_click = mouse_position;
         }
 
@@ -757,6 +759,7 @@ bool GLGizmoPainterBase::gizmo_event(SLAGizmoEventType action, const Vec2d& mous
         else if (m_tool_type == ToolType::BUCKET_FILL)
             m_triangle_selectors[m_rr.mesh_id]->bucket_fill_select_triangles(m_rr.hit, int(m_rr.facet), clp, m_bucket_fill_angle, BucketFillGapArea, TriangleSelector::BucketFillPropagate::YES);
         m_triangle_selectors[m_rr.mesh_id]->request_update_render_data();
+        this->on_painting_changed(true);
         m_seed_fill_last_mesh_id = m_rr.mesh_id;
         return true;
     }
@@ -767,6 +770,7 @@ bool GLGizmoPainterBase::gizmo_event(SLAGizmoEventType action, const Vec2d& mous
         wxString action_name = this->handle_snapshot_action_name(shift_down, m_button_down);
         Plater::TakeSnapshot snapshot(wxGetApp().plater(), action_name, UndoRedo::SnapshotType::GizmoAction);
         update_model_object();
+        this->on_painting_changed(false);
 
         m_button_down = Button::None;
         m_last_mouse_click = Vec2d::Zero();

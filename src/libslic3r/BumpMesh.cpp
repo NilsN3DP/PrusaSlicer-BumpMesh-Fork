@@ -444,16 +444,16 @@ BakeResult bake_displacement_with_face_ids(const indexed_triangle_set &input, co
             V3 b{sub.pos[t * 9 + 3], sub.pos[t * 9 + 4], sub.pos[t * 9 + 5]};
             V3 c{sub.pos[t * 9 + 6], sub.pos[t * 9 + 7], sub.pos[t * 9 + 8]};
             V3 n = (b - a).cross(c - a);
-            bool excluded = !settings.apply_dir[faceDir(n)];
+            const uint32_t original_face = t < sub.face_id.size() ? sub.face_id[t] : uint32_t(t);
+            const bool has_direct_include_mask = !settings.include_face_mask.empty();
+            bool excluded = !has_direct_include_mask && !settings.apply_dir[faceDir(n)];
             if (settings.face_mask_mode != FaceMaskMode::None) {
-                const uint32_t original_face = t < sub.face_id.size() ? sub.face_id[t] : uint32_t(t);
                 const bool marked = original_face < settings.face_mask.size() && settings.face_mask[original_face] != 0;
                 if (settings.face_mask_mode == FaceMaskMode::Exclude)
                     excluded = excluded || marked;
                 else if (settings.face_mask_mode == FaceMaskMode::IncludeOnly)
                     excluded = excluded || !marked;
             }
-            const uint32_t original_face = t < sub.face_id.size() ? sub.face_id[t] : uint32_t(t);
             if (!settings.include_face_mask.empty()) {
                 const bool included = original_face < settings.include_face_mask.size() && settings.include_face_mask[original_face] != 0;
                 excluded = excluded || !included;

@@ -194,10 +194,11 @@ int face_dir(const Vec3f &n)
 bool bump_face_allowed(size_t facet_idx, const Vec3f &n, const BumpMesh::Settings &settings,
                        size_t source_face_idx = std::numeric_limits<size_t>::max())
 {
-    if (!settings.apply_dir[face_dir(n)])
+    const size_t mask_idx = source_face_idx == std::numeric_limits<size_t>::max() ? facet_idx : source_face_idx;
+    const bool has_direct_include_mask = !settings.include_face_mask.empty();
+    if (!has_direct_include_mask && !settings.apply_dir[face_dir(n)])
         return false;
 
-    const size_t mask_idx = source_face_idx == std::numeric_limits<size_t>::max() ? facet_idx : source_face_idx;
     if (settings.face_mask_mode != BumpMesh::FaceMaskMode::None) {
         const bool marked = mask_idx < settings.face_mask.size() && settings.face_mask[mask_idx] != 0;
         if (settings.face_mask_mode == BumpMesh::FaceMaskMode::Exclude && marked)
@@ -907,6 +908,17 @@ ColorRGBA GLGizmoBumpMesh::get_cursor_sphere_right_button_color() const
                                        ColorRGBA{0.12f, 0.65f, 1.0f, 0.25f};
 }
 
+void GLGizmoBumpMesh::on_painting_changed(bool temporary_preview)
+{
+    if (!temporary_preview)
+        update_model_object();
+
+    m_preview_dirty = true;
+    m_geometry_preview_dirty = true;
+    m_parent.set_as_dirty();
+    m_parent.request_extra_frame();
+}
+
 wxString GLGizmoBumpMesh::handle_snapshot_action_name(bool shift_down, GLGizmoPainterBase::Button button_down) const
 {
     if (shift_down)
@@ -1280,15 +1292,16 @@ void GLGizmoBumpMesh::on_render_input_window(float, float, float)
     preview_changed |= ImGui::Checkbox(_u8L("Back (-Y)").c_str(), &m_apply_dir[BumpMesh::DIR_NY]);
 
     ImGui::Separator();
-    ImGui::TextUnformatted(_u8L("Surface mask").c_str());
+    ImGui::TextUnformatted(_u8L("Surface selection").c_str());
+    ImGui::TextUnformatted(_u8L("Pick faces for Bump Mesh only. This does not use existing color or extruder painting.").c_str());
     ImGui::TextUnformatted(_u8L("Left mouse paints the selected mode, right mouse paints the opposite mode. Hold Shift to erase.").c_str());
-    if (ImGui::RadioButton(_u8L("Include faces").c_str(), m_surface_paint_mode == 0)) {
+    if (ImGui::RadioButton(_u8L("Only selected faces").c_str(), m_surface_paint_mode == 0)) {
         m_surface_paint_mode = 0;
         preview_changed = true;
     }
-    advanced_tooltip(_u8L("Marked blue faces are the only faces that receive Bump Mesh. If no include faces are marked, the side checkboxes decide the affected area."));
+    advanced_tooltip(_u8L("Marked blue faces are the only faces that receive Bump Mesh. Paint nothing to use the side checkboxes instead."));
     ImGui::SameLine();
-    if (ImGui::RadioButton(_u8L("Exclude faces").c_str(), m_surface_paint_mode == 1)) {
+    if (ImGui::RadioButton(_u8L("Exclude selected faces").c_str(), m_surface_paint_mode == 1)) {
         m_surface_paint_mode = 1;
         preview_changed = true;
     }
@@ -1343,16 +1356,30 @@ void GLGizmoBumpMesh::on_render_input_window(float, float, float)
         advanced_tooltip(_u8L("Maximum angle between neighboring faces shown by the hover preview and selected on click."));
     }
 
-    if (selected_volume_for_ui != nullptr && has_bump_mask(selected_volume_for_ui))
-        ImGui::TextUnformatted(_u8L("Mask active").c_str());
-    else if (selected_volume_for_ui != nullptr && has_stored_source_mask(*selected_volume_for_ui))
-        ImGui::TextUnformatted(_u8L("Stored source mask will be reused on Apply").c_str());
-    else if (selected_volume_for_ui != nullptr && has_current_painter_mask(*selected_volume_for_ui))
-        ImGui::TextUnformatted(_u8L("Remove Bump Mesh before changing the source mask.").c_str());
-    else
+    std::vector<uint8_t> include_mask;
+    std::vector<uint8_t> exclude_mask;
+    if (selected_volume_for_ui != nullptr) {
+        const auto original_it = m_original_meshes.find(selected_volume_for_ui);
+        const indexed_triangle_set &mask_source = original_it != m_original_meshes.end() ?
+            original_it->second : selected_volume_for_ui->mesh().its;
+        build_bump_face_masks(*selected_volume_for_ui, &mask_source, mask_source.indices.size(), include_mask, exclude_mask);
+    }
+    const size_t include_count = size_t(std::count(include_mask.begin(), include_mask.end(), uint8_t(1)));
+    const size_t exclude_count = size_t(std::count(exclude_mask.begin(), exclude_mask.end(), uint8_t(1)));
+    if (include_count > 0 || exclude_count > 0) {
+        if (include_count > 0 && exclude_count > 0)
+            ImGui::Text("%s %zu / %s %zu", _u8L("Included:").c_str(), include_count, _u8L("Excluded:").c_str(), exclude_count);
+        else if (include_count > 0)
+            ImGui::Text("%s %zu", _u8L("Included faces:").c_str(), include_count);
+        else
+            ImGui::Text("%s %zu", _u8L("Excluded faces:").c_str(), exclude_count);
+    } else if (selected_volume_for_ui != nullptr && has_current_painter_mask(*selected_volume_for_ui)) {
+        ImGui::TextUnformatted(_u8L("Remove Bump Mesh before changing the source selection.").c_str());
+    } else {
         ImGui::TextUnformatted(_u8L("No Bump Mesh mask painted").c_str());
+    }
 
-    if (ImGui::Button(_u8L("Clear mask").c_str())) {
+    if (ImGui::Button(_u8L("Clear surface selection").c_str())) {
         clear_bump_mask();
         preview_changed = true;
     }

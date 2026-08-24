@@ -26,6 +26,7 @@ Implemented areas:
 * Side selection for +X, -X, +Y, -Y, +Z, -Z.
 * Direct Surface Mask painting for Bump Mesh include/exclude regions.
 * Brush, Bucket, and Smart fill selection tools for Bump Mesh masks.
+* Immediate preview refresh after Bump Mesh surface selection edits.
 * Mask propagation by original face ID through adaptive subdivision.
 * Print-safe preset.
 * Advanced controls for height inversion, overhang protection, seams, offsets, rotation, angle limits, falloff, normal smoothing, and triangle cap.

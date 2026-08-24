@@ -40,6 +40,7 @@ private:
     TriangleStateType get_right_button_state_type() const override;
     ColorRGBA get_cursor_sphere_left_button_color() const override;
     ColorRGBA get_cursor_sphere_right_button_color() const override;
+    void on_painting_changed(bool temporary_preview) override;
 
     bool can_apply() const;
     bool load_texture(const wxString &path);

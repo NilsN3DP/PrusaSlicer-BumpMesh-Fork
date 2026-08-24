@@ -71,15 +71,17 @@ Surface Mask is Bump Mesh's own face selection layer. It does not read existing 
 
 Use it when side selection is too broad:
 
-* **Include faces** paints blue regions that are allowed to receive Bump Mesh. If at least one include region is painted, only included faces are displaced.
-* **Exclude faces** paints orange regions that stay flat. Exclude always wins over include.
+* **Only selected faces** paints blue regions that are allowed to receive Bump Mesh. If at least one include region is painted, the direct face selection becomes authoritative.
+* **Exclude selected faces** paints orange regions that stay flat. Exclude always wins over include.
 * **Brush** paints the faces under the cursor.
 * **Bucket** fills connected faces with similar surface direction.
 * **Smart fill** previews the connected region while hovering and applies it on click.
 
 Left mouse paints the selected mode. Right mouse paints the opposite mode. Hold Shift to erase painted Bump Mesh mask faces.
 
-When you click **Apply**, the mask is mapped through adaptive subdivision by original face ID, so the selected source regions remain the authority even after the mesh has been subdivided and displaced. Use **Clear mask** to remove Bump Mesh include/exclude marks from the selected volume.
+When no blue include region exists, the side checkboxes decide the affected area. Once blue include faces are painted, those faces are allowed even if a side checkbox would otherwise be off. Orange exclude faces still stay flat.
+
+When you click **Apply**, the mask is mapped through adaptive subdivision by original face ID, so the selected source regions remain the authority even after the mesh has been subdivided and displaced. Use **Clear surface selection** to remove Bump Mesh include/exclude marks from the selected volume.
 
 ## Auto Color
 

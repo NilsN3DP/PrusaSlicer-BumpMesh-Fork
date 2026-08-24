@@ -127,6 +127,7 @@ protected:
 
     virtual TriangleStateType get_left_button_state_type() const { return TriangleStateType::ENFORCER; }
     virtual TriangleStateType get_right_button_state_type() const { return TriangleStateType::BLOCKER; }
+    virtual void on_painting_changed(bool temporary_preview) {}
 
     float m_cursor_radius = 2.f;
     static constexpr float CursorRadiusMin  = 0.4f; // cannot be zero

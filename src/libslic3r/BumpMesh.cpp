@@ -7,6 +7,7 @@
 #include <cmath>
 #include <cstdint>
 #include <limits>
+#include <queue>
 #include <stdexcept>
 #include <unordered_map>
 #include <vector>
@@ -39,6 +40,7 @@ struct V3 {
 struct Soup {
     std::vector<float> pos;  // count*3, non-indexed
     std::vector<float> nrm;  // count*3
+    std::vector<uint32_t> face_id; // optional, one original face id per triangle
     size_t count() const { return pos.size() / 3; }
 };
 
@@ -262,7 +264,9 @@ Soup soupFromITS(const indexed_triangle_set &its) {
     size_t nf = its.indices.size();
     s.pos.resize(nf * 9);
     s.nrm.resize(nf * 9);
+    s.face_id.resize(nf);
     for (size_t f = 0; f < nf; f++) {
+        s.face_id[f] = uint32_t(f);
         const auto &face = its.indices[f];
         V3 p[3];
         for (int k = 0; k < 3; k++) {
@@ -277,7 +281,7 @@ Soup soupFromITS(const indexed_triangle_set &its) {
     return s;
 }
 
-indexed_triangle_set itsFromSoup(const Soup &s) {
+indexed_triangle_set itsFromSoup(const Soup &s, std::vector<uint32_t> *source_face_ids = nullptr) {
     indexed_triangle_set out;
     size_t n = s.count();
     PointMap map(QUANTISE, std::min<size_t>(n, 1u << 22));
@@ -294,6 +298,8 @@ indexed_triangle_set itsFromSoup(const Soup &s) {
         int a = id[f * 3], b = id[f * 3 + 1], c = id[f * 3 + 2];
         if (a == b || b == c || a == c) continue;  // drop degenerate
         out.indices.emplace_back(stl_triangle_vertex_indices{a, b, c});
+        if (source_face_ids != nullptr)
+            source_face_ids->push_back(f < s.face_id.size() ? s.face_id[f] : uint32_t(f));
     }
     return out;
 }
@@ -315,13 +321,108 @@ int faceDir(const V3 &n) {
     return n.z >= 0 ? DIR_PZ : DIR_NZ;
 }
 
+V3 faceNormal(const indexed_triangle_set &its, size_t face_idx)
+{
+    const stl_triangle_vertex_indices &face = its.indices[face_idx];
+    const Vec3f &a = its.vertices[face[0]];
+    const Vec3f &b = its.vertices[face[1]];
+    const Vec3f &c = its.vertices[face[2]];
+    V3 n{double((b - a).cross(c - a).x()), double((b - a).cross(c - a).y()), double((b - a).cross(c - a).z())};
+    const double len = n.length();
+    return len > 1e-12 ? n * (1.0 / len) : V3{0, 0, 1};
+}
+
 } // namespace
 
-indexed_triangle_set bake_displacement(const indexed_triangle_set &input, const Texture &texture, const Settings &settings) {
+std::vector<std::vector<size_t>> build_face_adjacency(const indexed_triangle_set &input)
+{
+    std::vector<std::vector<size_t>> adjacency(input.indices.size());
+    if (input.indices.empty())
+        return adjacency;
+
+    struct EdgeRef { size_t face_idx; int a; int b; };
+    struct EdgeKey {
+        int a;
+        int b;
+        bool operator==(const EdgeKey &rhs) const { return a == rhs.a && b == rhs.b; }
+    };
+    struct EdgeKeyHash {
+        size_t operator()(const EdgeKey &key) const {
+            return (size_t(uint32_t(key.a)) * 73856093u) ^ (size_t(uint32_t(key.b)) * 19349663u);
+        }
+    };
+
+    std::unordered_map<EdgeKey, EdgeRef, EdgeKeyHash> edge_to_face;
+    auto add_edge = [&](size_t face_idx, int va, int vb) {
+        EdgeKey key{std::min(va, vb), std::max(va, vb)};
+        auto it = edge_to_face.find(key);
+        if (it == edge_to_face.end()) {
+            edge_to_face.emplace(key, EdgeRef{face_idx, va, vb});
+            return;
+        }
+
+        const size_t other = it->second.face_idx;
+        if (other != face_idx) {
+            adjacency[face_idx].push_back(other);
+            adjacency[other].push_back(face_idx);
+        }
+    };
+
+    for (size_t face_idx = 0; face_idx < input.indices.size(); ++face_idx) {
+        const stl_triangle_vertex_indices &face = input.indices[face_idx];
+        add_edge(face_idx, face[0], face[1]);
+        add_edge(face_idx, face[1], face[2]);
+        add_edge(face_idx, face[2], face[0]);
+    }
+
+    for (std::vector<size_t> &neighbors : adjacency) {
+        std::sort(neighbors.begin(), neighbors.end());
+        neighbors.erase(std::unique(neighbors.begin(), neighbors.end()), neighbors.end());
+    }
+
+    return adjacency;
+}
+
+std::vector<uint8_t> bucket_fill_faces(const indexed_triangle_set &input,
+                                       const std::vector<std::vector<size_t>> &adjacency,
+                                       size_t start_face,
+                                       float max_dihedral_angle_deg)
+{
+    std::vector<uint8_t> selected(input.indices.size(), 0);
+    if (start_face >= input.indices.size() || adjacency.size() != input.indices.size())
+        return selected;
+
+    const double min_dot = std::cos(std::max(0.f, max_dihedral_angle_deg) * M_PI / 180.0);
+    std::vector<V3> normals(input.indices.size());
+    for (size_t face_idx = 0; face_idx < input.indices.size(); ++face_idx)
+        normals[face_idx] = faceNormal(input, face_idx);
+
+    std::queue<size_t> queue;
+    selected[start_face] = 1;
+    queue.push(start_face);
+
+    while (!queue.empty()) {
+        const size_t face_idx = queue.front();
+        queue.pop();
+
+        for (size_t next : adjacency[face_idx]) {
+            if (next >= input.indices.size() || selected[next])
+                continue;
+            if (normals[face_idx].dot(normals[next]) < min_dot)
+                continue;
+            selected[next] = 1;
+            queue.push(next);
+        }
+    }
+
+    return selected;
+}
+
+BakeResult bake_displacement_with_face_ids(const indexed_triangle_set &input, const Texture &texture, const Settings &settings) {
     if (!texture.valid())
         throw std::invalid_argument("BumpMesh texture dimensions do not match grayscale data");
     if (input.indices.empty() || input.vertices.empty())
-        return input;
+        return {input, {}};
 
     Bounds bounds = boundsOf(input);
     double maxDim = std::max({bounds.size.x, bounds.size.y, bounds.size.z});
@@ -331,9 +432,11 @@ indexed_triangle_set bake_displacement(const indexed_triangle_set &input, const 
     Soup soup = soupFromITS(input);
     Soup sub = subdivide(soup, maxEdge);
 
-    // Per-(subdivided)-face side mask from the geometric face direction.
+    // Per-(subdivided)-face side and painted-face mask from the geometric face
+    // direction plus the propagated original face id.
     std::vector<uint8_t> faceExcluded;
-    if (!settings.all_dirs_enabled()) {
+    if (!settings.all_dirs_enabled() || settings.face_mask_mode != FaceMaskMode::None ||
+        !settings.include_face_mask.empty() || !settings.exclude_face_mask.empty()) {
         size_t tri = sub.count() / 3;
         faceExcluded.assign(tri, 0);
         for (size_t t = 0; t < tri; t++) {
@@ -341,19 +444,45 @@ indexed_triangle_set bake_displacement(const indexed_triangle_set &input, const 
             V3 b{sub.pos[t * 9 + 3], sub.pos[t * 9 + 4], sub.pos[t * 9 + 5]};
             V3 c{sub.pos[t * 9 + 6], sub.pos[t * 9 + 7], sub.pos[t * 9 + 8]};
             V3 n = (b - a).cross(c - a);
-            if (!settings.apply_dir[faceDir(n)]) faceExcluded[t] = 1;
+            bool excluded = !settings.apply_dir[faceDir(n)];
+            if (settings.face_mask_mode != FaceMaskMode::None) {
+                const uint32_t original_face = t < sub.face_id.size() ? sub.face_id[t] : uint32_t(t);
+                const bool marked = original_face < settings.face_mask.size() && settings.face_mask[original_face] != 0;
+                if (settings.face_mask_mode == FaceMaskMode::Exclude)
+                    excluded = excluded || marked;
+                else if (settings.face_mask_mode == FaceMaskMode::IncludeOnly)
+                    excluded = excluded || !marked;
+            }
+            const uint32_t original_face = t < sub.face_id.size() ? sub.face_id[t] : uint32_t(t);
+            if (!settings.include_face_mask.empty()) {
+                const bool included = original_face < settings.include_face_mask.size() && settings.include_face_mask[original_face] != 0;
+                excluded = excluded || !included;
+            }
+            if (!settings.exclude_face_mask.empty()) {
+                const bool explicitly_excluded = original_face < settings.exclude_face_mask.size() && settings.exclude_face_mask[original_face] != 0;
+                excluded = excluded || explicitly_excluded;
+            }
+            if (excluded)
+                faceExcluded[t] = 1;
         }
     }
 
     Soup displaced = applyDisplacement(sub, texture, settings, bounds,
                                        faceExcluded.empty() ? nullptr : &faceExcluded);
 
-    indexed_triangle_set out = itsFromSoup(displaced);
+    BakeResult result;
+    result.mesh = itsFromSoup(displaced, &result.source_face_ids);
 
-    if (settings.target_triangles > 0 && (int)out.indices.size() > settings.target_triangles)
-        its_quadric_edge_collapse(out, (uint32_t)settings.target_triangles);
+    if (settings.target_triangles > 0 && (int)result.mesh.indices.size() > settings.target_triangles) {
+        its_quadric_edge_collapse(result.mesh, (uint32_t)settings.target_triangles);
+        result.source_face_ids.clear();
+    }
 
-    return out;
+    return result;
+}
+
+indexed_triangle_set bake_displacement(const indexed_triangle_set &input, const Texture &texture, const Settings &settings) {
+    return bake_displacement_with_face_ids(input, texture, settings).mesh;
 }
 
 float sample_gray(const Vec3f &posf, const Vec3f &nf, const Settings &s,

@@ -364,6 +364,8 @@ public:
     bool                 has_facets(TriangleStateType state) const;
     static bool          has_facets(const TriangleSplittingData &data, TriangleStateType test_state);
     int                  num_facets(TriangleStateType state) const;
+    size_t               source_triangle_count() const { return size_t(m_orig_size_indices); }
+    std::vector<uint8_t> source_triangle_mask(TriangleStateType state, size_t source_triangle_count) const;
     // Get facets that pass the filter. Don't triangulate T-joints.
     template<AdditionalMeshInfo facet_info = AdditionalMeshInfo::None>
     typename IndexedTriangleSetType<facet_info>::type get_facets(const std::function<bool(const Triangle &)> &facet_filter) const;

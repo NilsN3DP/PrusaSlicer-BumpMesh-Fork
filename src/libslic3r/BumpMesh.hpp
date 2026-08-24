@@ -2,6 +2,7 @@
 #define slic3r_BumpMesh_hpp_
 
 #include <array>
+#include <cstdint>
 #include <limits>
 #include <vector>
 
@@ -24,6 +25,12 @@ enum class MappingMode {
 // dominant outward direction is enabled; vertices shared with a disabled face
 // are pinned so the mesh stays watertight at the boundary.
 enum FaceDir { DIR_PX = 0, DIR_NX, DIR_PY, DIR_NY, DIR_PZ, DIR_NZ, DIR_COUNT };
+
+enum class FaceMaskMode {
+    None,
+    Exclude,
+    IncludeOnly,
+};
 
 struct Settings {
     MappingMode mapping_mode = MappingMode::Triplanar;
@@ -59,6 +66,15 @@ struct Settings {
     // Which face directions receive displacement (default: all).
     std::array<bool, DIR_COUNT> apply_dir = {true, true, true, true, true, true};
 
+    // Optional per-original-face mask. In Exclude mode, marked faces stay flat.
+    // In IncludeOnly mode, only marked faces receive displacement.
+    FaceMaskMode face_mask_mode = FaceMaskMode::None;
+    std::vector<uint8_t> face_mask;
+    // Optional direct painter masks. If include_face_mask is non-empty, only
+    // marked source faces are displaced. exclude_face_mask always wins.
+    std::vector<uint8_t> include_face_mask;
+    std::vector<uint8_t> exclude_face_mask;
+
     // Cylinder overrides (NaN => derive from the bounding box).
     float cylinder_center_x = std::numeric_limits<float>::quiet_NaN();
     float cylinder_center_y = std::numeric_limits<float>::quiet_NaN();
@@ -78,7 +94,21 @@ struct Texture {
     bool valid() const { return width > 0 && height > 0 && gray.size() == size_t(width * height); }
 };
 
+struct BakeResult {
+    indexed_triangle_set mesh;
+    // One source/original face id per output triangle. Empty if unavailable
+    // (currently after decimation).
+    std::vector<uint32_t> source_face_ids;
+};
+
 indexed_triangle_set bake_displacement(const indexed_triangle_set &input, const Texture &texture, const Settings &settings);
+BakeResult bake_displacement_with_face_ids(const indexed_triangle_set &input, const Texture &texture, const Settings &settings);
+
+std::vector<std::vector<size_t>> build_face_adjacency(const indexed_triangle_set &input);
+std::vector<uint8_t> bucket_fill_faces(const indexed_triangle_set &input,
+                                       const std::vector<std::vector<size_t>> &adjacency,
+                                       size_t start_face,
+                                       float max_dihedral_angle_deg);
 
 // Sample the displacement grey value (0..1) at a single surface point with the
 // given outward unit normal, using the exact projection math of

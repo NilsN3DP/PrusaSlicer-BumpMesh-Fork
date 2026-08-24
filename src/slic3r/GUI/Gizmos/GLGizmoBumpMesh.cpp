@@ -23,6 +23,7 @@
 #include <algorithm>
 #include <cmath>
 #include <iterator>
+#include <limits>
 #include <unordered_set>
 
 namespace Slic3r::GUI {
@@ -190,6 +191,34 @@ int face_dir(const Vec3f &n)
     return n.z() >= 0.f ? BumpMesh::DIR_PZ : BumpMesh::DIR_NZ;
 }
 
+bool bump_face_allowed(size_t facet_idx, const Vec3f &n, const BumpMesh::Settings &settings,
+                       size_t source_face_idx = std::numeric_limits<size_t>::max())
+{
+    if (!settings.apply_dir[face_dir(n)])
+        return false;
+
+    const size_t mask_idx = source_face_idx == std::numeric_limits<size_t>::max() ? facet_idx : source_face_idx;
+    if (settings.face_mask_mode != BumpMesh::FaceMaskMode::None) {
+        const bool marked = mask_idx < settings.face_mask.size() && settings.face_mask[mask_idx] != 0;
+        if (settings.face_mask_mode == BumpMesh::FaceMaskMode::Exclude && marked)
+            return false;
+        if (settings.face_mask_mode == BumpMesh::FaceMaskMode::IncludeOnly && !marked)
+            return false;
+    }
+
+    if (!settings.include_face_mask.empty()) {
+        const bool included = mask_idx < settings.include_face_mask.size() && settings.include_face_mask[mask_idx] != 0;
+        if (!included)
+            return false;
+    }
+    if (!settings.exclude_face_mask.empty()) {
+        const bool excluded = mask_idx < settings.exclude_face_mask.size() && settings.exclude_face_mask[mask_idx] != 0;
+        if (excluded)
+            return false;
+    }
+    return true;
+}
+
 ColorRGBA preview_color(int bucket, int steps)
 {
     static const std::array<ColorRGBA, 8> palette = {{
@@ -265,7 +294,7 @@ bool extruder_combo(const char *label, int &selected_idx, int count)
 } // namespace
 
 GLGizmoBumpMesh::GLGizmoBumpMesh(GLCanvas3D &parent)
-    : GLGizmoBase(parent, "bump_mesh.svg", 15)
+    : GLGizmoPainterBase(parent, "bump_mesh.svg", 15)
 {
 }
 
@@ -276,7 +305,12 @@ std::string GLGizmoBumpMesh::on_get_name() const
 
 bool GLGizmoBumpMesh::on_is_activable() const
 {
-    return can_apply();
+    return GLGizmoPainterBase::on_is_activable() && can_apply();
+}
+
+bool GLGizmoBumpMesh::on_is_selectable() const
+{
+    return GLGizmoPainterBase::on_is_selectable();
 }
 
 bool GLGizmoBumpMesh::can_apply() const
@@ -293,8 +327,9 @@ bool GLGizmoBumpMesh::can_apply() const
     return volume != nullptr && volume->is_model_part() && !volume->mesh().its.indices.empty();
 }
 
-void GLGizmoBumpMesh::data_changed(bool)
+void GLGizmoBumpMesh::data_changed(bool is_serializing)
 {
+    GLGizmoPainterBase::data_changed(is_serializing);
     prune_original_meshes();
     invalidate_preview();
 }
@@ -307,6 +342,7 @@ void GLGizmoBumpMesh::prune_original_meshes()
     const Model *model = m_parent.get_selection().get_model();
     if (model == nullptr) {
         m_original_meshes.clear();
+        m_bump_mask_facets.clear();
         return;
     }
     std::unordered_set<const ModelVolume *> alive;
@@ -315,6 +351,8 @@ void GLGizmoBumpMesh::prune_original_meshes()
             alive.insert(volume);
     for (auto it = m_original_meshes.begin(); it != m_original_meshes.end();)
         it = (alive.count(it->first) != 0) ? std::next(it) : m_original_meshes.erase(it);
+    for (auto it = m_bump_mask_facets.begin(); it != m_bump_mask_facets.end();)
+        it = (alive.count(it->first) != 0) ? std::next(it) : m_bump_mask_facets.erase(it);
 }
 
 void GLGizmoBumpMesh::invalidate_preview()
@@ -375,7 +413,178 @@ bool GLGizmoBumpMesh::load_texture_from_file()
     return true;
 }
 
-BumpMesh::Settings GLGizmoBumpMesh::build_settings() const
+void GLGizmoBumpMesh::update_model_object() const
+{
+    ModelObject *mo = m_c->selection_info()->model_object();
+    if (mo == nullptr)
+        return;
+
+    bool updated = false;
+    int idx = -1;
+    for (ModelVolume *mv : mo->volumes) {
+        if (!mv->is_model_part())
+            continue;
+        ++idx;
+        if (idx >= int(m_triangle_selectors.size()))
+            continue;
+
+        TriangleSelector::TriangleSplittingData data = m_triangle_selectors[size_t(idx)]->serialize();
+        const size_t source_face_count = mv->mesh().its.indices.size();
+        const auto original_it = m_original_meshes.find(mv);
+        if (original_it != m_original_meshes.end() && source_face_count != original_it->second.indices.size())
+            continue;
+
+        if (data.triangles_to_split.empty()) {
+            updated |= m_bump_mask_facets.erase(mv) > 0;
+        } else {
+            auto it = m_bump_mask_facets.find(mv);
+            if (it == m_bump_mask_facets.end() ||
+                it->second.selector_data != data ||
+                it->second.source_face_count != source_face_count) {
+                m_bump_mask_facets[mv] = BumpMaskData{std::move(data), source_face_count};
+                updated = true;
+            }
+        }
+    }
+
+    if (updated) {
+        m_preview_dirty = true;
+        m_geometry_preview_dirty = true;
+        m_parent.set_as_dirty();
+        m_parent.request_extra_frame();
+    }
+}
+
+void GLGizmoBumpMesh::update_from_model_object()
+{
+    const ModelObject *mo = m_c->selection_info()->model_object();
+    m_triangle_selectors.clear();
+    if (mo == nullptr)
+        return;
+
+    for (const ModelVolume *mv : mo->volumes) {
+        if (!mv->is_model_part())
+            continue;
+
+        m_triangle_selectors.emplace_back(std::make_unique<TriangleSelectorGUI>(mv->mesh()));
+        auto it = m_bump_mask_facets.find(const_cast<ModelVolume*>(mv));
+        if (it != m_bump_mask_facets.end() && it->second.source_face_count == mv->mesh().its.indices.size())
+            m_triangle_selectors.back()->deserialize(it->second.selector_data, false);
+        m_triangle_selectors.back()->request_update_render_data();
+    }
+}
+
+int GLGizmoBumpMesh::selector_index_for_volume(const ModelVolume &volume) const
+{
+    const ModelObject *mo = volume.get_object();
+    if (mo == nullptr)
+        return -1;
+
+    int idx = -1;
+    for (const ModelVolume *mv : mo->volumes) {
+        if (!mv->is_model_part())
+            continue;
+        ++idx;
+        if (mv == &volume)
+            return idx;
+    }
+    return -1;
+}
+
+void GLGizmoBumpMesh::build_bump_face_masks(const ModelVolume &volume, const indexed_triangle_set *source, size_t face_count,
+                                            std::vector<uint8_t> &include_mask,
+                                            std::vector<uint8_t> &exclude_mask) const
+{
+    include_mask.clear();
+    exclude_mask.clear();
+    if (face_count == 0)
+        return;
+
+    const int idx = selector_index_for_volume(volume);
+    if (idx >= 0 && idx < int(m_triangle_selectors.size()) &&
+        m_triangle_selectors[size_t(idx)]->source_triangle_count() == face_count) {
+        include_mask = m_triangle_selectors[size_t(idx)]->source_triangle_mask(TriangleStateType::ENFORCER, face_count);
+        exclude_mask = m_triangle_selectors[size_t(idx)]->source_triangle_mask(TriangleStateType::BLOCKER, face_count);
+        if (!include_mask.empty() || !exclude_mask.empty())
+            return;
+    }
+
+    auto it = m_bump_mask_facets.find(const_cast<ModelVolume*>(&volume));
+    if (it == m_bump_mask_facets.end())
+        return;
+    if (source == nullptr)
+        return;
+
+    if (it->second.source_face_count != face_count)
+        return;
+    TriangleMesh source_mesh{indexed_triangle_set(*source)};
+    TriangleSelector selector(source_mesh);
+    selector.deserialize(it->second.selector_data, false);
+    include_mask = selector.source_triangle_mask(TriangleStateType::ENFORCER, face_count);
+    exclude_mask = selector.source_triangle_mask(TriangleStateType::BLOCKER, face_count);
+}
+
+bool GLGizmoBumpMesh::has_bump_mask(const ModelVolume *volume) const
+{
+    if (volume != nullptr) {
+        std::vector<uint8_t> include_mask;
+        std::vector<uint8_t> exclude_mask;
+        build_bump_face_masks(*volume, &volume->mesh().its, volume->mesh().its.indices.size(), include_mask, exclude_mask);
+        return !include_mask.empty() || !exclude_mask.empty();
+    }
+
+    for (const std::unique_ptr<TriangleSelectorGUI> &selector : m_triangle_selectors)
+        if (selector && (selector->has_facets(TriangleStateType::ENFORCER) || selector->has_facets(TriangleStateType::BLOCKER)))
+            return true;
+    return !m_bump_mask_facets.empty();
+}
+
+bool GLGizmoBumpMesh::has_current_painter_mask(const ModelVolume &volume) const
+{
+    const int idx = selector_index_for_volume(volume);
+    return idx >= 0 && idx < int(m_triangle_selectors.size()) &&
+           m_triangle_selectors[size_t(idx)] &&
+           (m_triangle_selectors[size_t(idx)]->has_facets(TriangleStateType::ENFORCER) ||
+            m_triangle_selectors[size_t(idx)]->has_facets(TriangleStateType::BLOCKER));
+}
+
+bool GLGizmoBumpMesh::has_stored_source_mask(const ModelVolume &volume) const
+{
+    auto mask_it = m_bump_mask_facets.find(const_cast<ModelVolume*>(&volume));
+    if (mask_it == m_bump_mask_facets.end() || mask_it->second.selector_data.triangles_to_split.empty())
+        return false;
+
+    auto original_it = m_original_meshes.find(const_cast<ModelVolume*>(&volume));
+    const size_t source_face_count = original_it != m_original_meshes.end() ?
+        original_it->second.indices.size() : volume.mesh().its.indices.size();
+    return mask_it->second.source_face_count == source_face_count;
+}
+
+void GLGizmoBumpMesh::clear_bump_mask()
+{
+    const Selection &selection = m_parent.get_selection();
+    if (selection.get_model() == nullptr)
+        return;
+
+    const GLVolume *gl_volume = selection.get_first_volume();
+    if (gl_volume == nullptr)
+        return;
+
+    ModelVolume *volume = get_model_volume(*gl_volume, selection.get_model()->objects);
+    if (volume == nullptr)
+        return;
+
+    const int idx = selector_index_for_volume(*volume);
+    if (idx >= 0 && idx < int(m_triangle_selectors.size()) && m_triangle_selectors[size_t(idx)]) {
+        m_triangle_selectors[size_t(idx)]->reset();
+        m_triangle_selectors[size_t(idx)]->request_update_render_data();
+    }
+
+    m_bump_mask_facets.erase(volume);
+    invalidate_preview();
+}
+
+BumpMesh::Settings GLGizmoBumpMesh::build_settings(const ModelVolume *volume, const indexed_triangle_set *source) const
 {
     BumpMesh::Settings s;
     const int mode_idx = std::clamp(m_mapping_mode, 0, int(std::size(MAPPING_MODES)) - 1);
@@ -399,6 +608,9 @@ BumpMesh::Settings GLGizmoBumpMesh::build_settings() const
     s.target_triangles = m_target_triangles;
     for (int i = 0; i < BumpMesh::DIR_COUNT; ++i)
         s.apply_dir[i] = m_apply_dir[i];
+    if (volume != nullptr && source != nullptr) {
+        build_bump_face_masks(*volume, source, source->indices.size(), s.include_face_mask, s.exclude_face_mask);
+    }
     return s;
 }
 
@@ -454,7 +666,8 @@ int GLGizmoBumpMesh::estimate_triangle_count() const
         return int(its.indices.size());
 
     double area = 0.0;
-    for (const stl_triangle_vertex_indices &face : its.indices) {
+    for (size_t facet_idx = 0; facet_idx < its.indices.size(); ++facet_idx) {
+        const stl_triangle_vertex_indices &face = its.indices[facet_idx];
         const Vec3f v0 = its.vertices[face[0]];
         const Vec3f v1 = its.vertices[face[1]];
         const Vec3f v2 = its.vertices[face[2]];
@@ -487,7 +700,7 @@ void GLGizmoBumpMesh::update_geometry_preview()
 
     m_geometry_preview_model.reset();
 
-    BumpMesh::Settings settings = build_settings();
+    BumpMesh::Settings settings = build_settings(volume, &source);
     constexpr int preview_triangle_cap = 350000;
     if (settings.target_triangles <= 0 || settings.target_triangles > preview_triangle_cap)
         settings.target_triangles = preview_triangle_cap;
@@ -526,12 +739,13 @@ void GLGizmoBumpMesh::update_auto_color_preview()
         data.format = {GLModel::Geometry::EPrimitiveType::Triangles, GLModel::Geometry::EVertexLayout::P3N3};
 
     const BumpMesh::Texture &texture = m_texture.valid() ? m_texture : make_preview_texture();
-    const BumpMesh::Settings settings = build_settings();
+    const BumpMesh::Settings settings = build_settings(volume, &its);
     const BoundingBoxf3 bb = bounding_box(its);
     const float texture_threshold = std::clamp(m_texture_dark_cutoff, 0.01f, 0.99f);
     std::vector<int> bucket_vertex_count(size_t(steps), 0);
 
-    for (const stl_triangle_vertex_indices &face : its.indices) {
+    for (size_t facet_idx = 0; facet_idx < its.indices.size(); ++facet_idx) {
+        const stl_triangle_vertex_indices &face = its.indices[facet_idx];
         const Vec3f v0 = its.vertices[face[0]];
         const Vec3f v1 = its.vertices[face[1]];
         const Vec3f v2 = its.vertices[face[2]];
@@ -540,7 +754,7 @@ void GLGizmoBumpMesh::update_auto_color_preview()
         if (n_len <= 1e-12f)
             continue;
         n /= n_len;
-        if (!settings.apply_dir[face_dir(n)])
+        if (!bump_face_allowed(facet_idx, n, settings))
             continue;
 
         const Vec3f center = (v0 + v1 + v2) / 3.f;
@@ -592,7 +806,7 @@ int GLGizmoBumpMesh::extruder_index_for_bucket(int bucket, int steps) const
     return std::clamp(bucket, 0, steps - 1);
 }
 
-void GLGizmoBumpMesh::on_render()
+void GLGizmoBumpMesh::render_preview_models()
 {
     if ((!m_auto_color_preview && !m_live_geometry_preview) || !can_apply())
         return;
@@ -637,7 +851,74 @@ void GLGizmoBumpMesh::on_render()
     shader->stop_using();
 }
 
-void GLGizmoBumpMesh::assign_auto_color_to_extruders(ModelVolume &volume) const
+void GLGizmoBumpMesh::render_painter_gizmo()
+{
+    const Selection &selection = m_parent.get_selection();
+
+    glsafe(::glEnable(GL_BLEND));
+    glsafe(::glEnable(GL_DEPTH_TEST));
+
+    render_preview_models();
+    render_triangles(selection);
+    m_c->object_clipper()->render_cut();
+    m_c->instances_hider()->render_cut();
+    render_cursor();
+
+    glsafe(::glDisable(GL_BLEND));
+}
+
+void GLGizmoBumpMesh::on_opening()
+{
+    update_from_model_object();
+    m_triangle_splitting_enabled = true;
+    m_tool_type = ToolType::BRUSH;
+    m_cursor_type = TriangleSelector::CursorType::SPHERE;
+}
+
+void GLGizmoBumpMesh::on_shutdown()
+{
+    update_model_object();
+}
+
+PainterGizmoType GLGizmoBumpMesh::get_painter_type() const
+{
+    return PainterGizmoType::BUMP_MESH;
+}
+
+TriangleStateType GLGizmoBumpMesh::get_left_button_state_type() const
+{
+    return m_surface_paint_mode == 0 ? TriangleStateType::ENFORCER : TriangleStateType::BLOCKER;
+}
+
+TriangleStateType GLGizmoBumpMesh::get_right_button_state_type() const
+{
+    return m_surface_paint_mode == 0 ? TriangleStateType::BLOCKER : TriangleStateType::ENFORCER;
+}
+
+ColorRGBA GLGizmoBumpMesh::get_cursor_sphere_left_button_color() const
+{
+    return m_surface_paint_mode == 0 ? ColorRGBA{0.12f, 0.65f, 1.0f, 0.25f} :
+                                       ColorRGBA{1.0f, 0.32f, 0.18f, 0.25f};
+}
+
+ColorRGBA GLGizmoBumpMesh::get_cursor_sphere_right_button_color() const
+{
+    return m_surface_paint_mode == 0 ? ColorRGBA{1.0f, 0.32f, 0.18f, 0.25f} :
+                                       ColorRGBA{0.12f, 0.65f, 1.0f, 0.25f};
+}
+
+wxString GLGizmoBumpMesh::handle_snapshot_action_name(bool shift_down, GLGizmoPainterBase::Button button_down) const
+{
+    if (shift_down)
+        return _L("Erase Bump Mesh mask");
+
+    const TriangleStateType state = button_down == Button::Right ? get_right_button_state_type() : get_left_button_state_type();
+    return state == TriangleStateType::ENFORCER ? _L("Include Bump Mesh faces") : _L("Exclude Bump Mesh faces");
+}
+
+void GLGizmoBumpMesh::assign_auto_color_to_extruders(ModelVolume &volume,
+                                                     const BumpMesh::Settings *settings_override,
+                                                     const std::vector<uint32_t> *source_face_ids) const
 {
     if (!m_auto_color_preview || !m_auto_color_to_extruders)
         return;
@@ -652,9 +933,14 @@ void GLGizmoBumpMesh::assign_auto_color_to_extruders(ModelVolume &volume) const
 
     const int steps = std::clamp(m_auto_color_steps, 2, std::min(8, total_extruders));
     const BumpMesh::Texture &texture = m_texture.valid() ? m_texture : make_preview_texture();
-    const BumpMesh::Settings settings = build_settings();
+    const BumpMesh::Settings settings = settings_override != nullptr ? *settings_override : build_settings(&volume, &its);
     const BoundingBoxf3 bb = bounding_box(its);
     const float texture_threshold = std::clamp(m_texture_dark_cutoff, 0.01f, 0.99f);
+    const bool use_source_face_ids = source_face_ids != nullptr && source_face_ids->size() == its.indices.size();
+    const bool requires_source_face_ids = !settings.include_face_mask.empty() || !settings.exclude_face_mask.empty() ||
+                                          settings.face_mask_mode != BumpMesh::FaceMaskMode::None;
+    if (requires_source_face_ids && settings_override != nullptr && !use_source_face_ids)
+        return;
 
     TriangleSelector selector(volume.mesh());
     for (size_t facet_idx = 0; facet_idx < its.indices.size(); ++facet_idx) {
@@ -667,7 +953,8 @@ void GLGizmoBumpMesh::assign_auto_color_to_extruders(ModelVolume &volume) const
         if (n_len <= 1e-12f)
             continue;
         n /= n_len;
-        if (!settings.apply_dir[face_dir(n)])
+        const size_t source_face_idx = use_source_face_ids ? size_t((*source_face_ids)[facet_idx]) : std::numeric_limits<size_t>::max();
+        if (!bump_face_allowed(facet_idx, n, settings, source_face_idx))
             continue;
 
         const Vec3f center = (v0 + v1 + v2) / 3.f;
@@ -720,9 +1007,12 @@ void GLGizmoBumpMesh::apply_to_selection()
     Plater *plater = wxGetApp().plater();
     plater->take_snapshot(m_apply_to_copy ? _u8L("Bump Mesh Copy") : _u8L("Bump Mesh"));
 
+    ModelVolume *mask_source_volume = volume;
     if (m_apply_to_copy) {
         ModelVolume *copy = object->add_volume(*volume, ModelVolumeType::MODEL_PART);
         copy->name = volume->name.empty() ? "Bump Mesh" : volume->name + " Bump Mesh";
+        if (auto mask_it = m_bump_mask_facets.find(volume); mask_it != m_bump_mask_facets.end())
+            m_bump_mask_facets[copy] = mask_it->second;
         volume = copy;
     } else {
         plater->clear_before_change_mesh(selection.get_object_idx(), _u8L("Custom supports, seams and multimaterial painting were removed after displacing the mesh."));
@@ -732,12 +1022,17 @@ void GLGizmoBumpMesh::apply_to_selection()
     if (original_it == m_original_meshes.end())
         original_it = m_original_meshes.emplace(volume, volume->mesh().its).first;
 
-    const BumpMesh::Settings settings = build_settings();
+    BumpMesh::Settings settings = build_settings(mask_source_volume, &original_it->second);
+    if (m_auto_color_preview && m_auto_color_to_extruders &&
+        (!settings.include_face_mask.empty() || !settings.exclude_face_mask.empty() ||
+         settings.face_mask_mode != BumpMesh::FaceMaskMode::None)) {
+        settings.target_triangles = 0;
+    }
     const BumpMesh::Texture &texture = m_texture.valid() ? m_texture : make_preview_texture();
-    indexed_triangle_set displaced = BumpMesh::bake_displacement(original_it->second, texture, settings);
+    BumpMesh::BakeResult displaced = BumpMesh::bake_displacement_with_face_ids(original_it->second, texture, settings);
 
-    volume->set_mesh(std::move(displaced));
-    assign_auto_color_to_extruders(*volume);
+    volume->set_mesh(std::move(displaced.mesh));
+    assign_auto_color_to_extruders(*volume, &settings, displaced.source_face_ids.empty() ? nullptr : &displaced.source_face_ids);
     volume->calculate_convex_hull();
     volume->set_new_unique_id();
     object->invalidate_bounding_box();
@@ -745,6 +1040,7 @@ void GLGizmoBumpMesh::apply_to_selection()
 
     plater->changed_object(*object);
     wxGetApp().obj_list()->update_info_items(selection.get_object_idx());
+    update_from_model_object();
     invalidate_preview();
     m_parent.reload_scene(true, true);
 }
@@ -780,6 +1076,7 @@ void GLGizmoBumpMesh::remove_from_selection()
     object->ensure_on_bed(true);
 
     plater->changed_object(*object);
+    update_from_model_object();
     invalidate_preview();
     m_parent.reload_scene(true, true);
 }
@@ -792,10 +1089,12 @@ void GLGizmoBumpMesh::on_render_input_window(float, float, float)
 
     const bool enabled = can_apply();
     bool has_original = false;
+    ModelVolume *selected_volume_for_ui = nullptr;
     if (enabled) {
         const Selection &selection = m_parent.get_selection();
         if (const GLVolume *gl_volume = selection.get_first_volume()) {
             ModelVolume *volume = get_model_volume(*gl_volume, selection.get_model()->objects);
+            selected_volume_for_ui = volume;
             has_original = volume != nullptr && m_original_meshes.find(volume) != m_original_meshes.end();
         }
     }
@@ -980,6 +1279,85 @@ void GLGizmoBumpMesh::on_render_input_window(float, float, float)
     ImGui::SameLine();
     preview_changed |= ImGui::Checkbox(_u8L("Back (-Y)").c_str(), &m_apply_dir[BumpMesh::DIR_NY]);
 
+    ImGui::Separator();
+    ImGui::TextUnformatted(_u8L("Surface mask").c_str());
+    ImGui::TextUnformatted(_u8L("Left mouse paints the selected mode, right mouse paints the opposite mode. Hold Shift to erase.").c_str());
+    if (ImGui::RadioButton(_u8L("Include faces").c_str(), m_surface_paint_mode == 0)) {
+        m_surface_paint_mode = 0;
+        preview_changed = true;
+    }
+    advanced_tooltip(_u8L("Marked blue faces are the only faces that receive Bump Mesh. If no include faces are marked, the side checkboxes decide the affected area."));
+    ImGui::SameLine();
+    if (ImGui::RadioButton(_u8L("Exclude faces").c_str(), m_surface_paint_mode == 1)) {
+        m_surface_paint_mode = 1;
+        preview_changed = true;
+    }
+    advanced_tooltip(_u8L("Marked orange faces are kept flat. Exclude always wins over include."));
+
+    int tool_type = m_tool_type == ToolType::BUCKET_FILL ? 1 :
+                    m_tool_type == ToolType::SMART_FILL  ? 2 : 0;
+    if (ImGui::RadioButton(_u8L("Brush").c_str(), tool_type == 0)) {
+        m_tool_type = ToolType::BRUSH;
+        preview_changed = true;
+    }
+    advanced_tooltip(_u8L("Paints the faces under the brush. Use this for manual cleanup and small areas."));
+    ImGui::SameLine();
+    if (ImGui::RadioButton(_u8L("Bucket").c_str(), tool_type == 1)) {
+        m_tool_type = ToolType::BUCKET_FILL;
+        preview_changed = true;
+    }
+    advanced_tooltip(_u8L("Fills connected faces with similar direction. The angle controls how far the fill can flow around corners."));
+    ImGui::SameLine();
+    if (ImGui::RadioButton(_u8L("Smart fill").c_str(), tool_type == 2)) {
+        m_tool_type = ToolType::SMART_FILL;
+        preview_changed = true;
+    }
+    advanced_tooltip(_u8L("Shows the connected fill area while hovering, then applies it on click. Good for selecting full surface regions."));
+
+    if (m_tool_type == ToolType::BRUSH) {
+        preview_changed |= ImGui::SliderFloat(_u8L("Brush size").c_str(), &m_cursor_radius, get_cursor_radius_min(), get_cursor_radius_max(), "%.1f mm");
+        advanced_tooltip(_u8L("Radius of the surface brush in model units."));
+
+        int cursor_shape = m_cursor_type == TriangleSelector::CursorType::CIRCLE ? 0 :
+                           m_cursor_type == TriangleSelector::CursorType::POINTER ? 2 : 1;
+        if (ImGui::RadioButton(_u8L("Circle").c_str(), cursor_shape == 0)) {
+            m_cursor_type = TriangleSelector::CursorType::CIRCLE;
+            preview_changed = true;
+        }
+        ImGui::SameLine();
+        if (ImGui::RadioButton(_u8L("Sphere").c_str(), cursor_shape == 1)) {
+            m_cursor_type = TriangleSelector::CursorType::SPHERE;
+            preview_changed = true;
+        }
+        ImGui::SameLine();
+        if (ImGui::RadioButton(_u8L("Triangle").c_str(), cursor_shape == 2)) {
+            m_cursor_type = TriangleSelector::CursorType::POINTER;
+            preview_changed = true;
+        }
+        advanced_tooltip(_u8L("Triangle picks one facet at a time. Circle follows the camera view. Sphere wraps around visible geometry."));
+    } else if (m_tool_type == ToolType::BUCKET_FILL) {
+        preview_changed |= ImGui::SliderFloat(_u8L("Bucket angle").c_str(), &m_bucket_fill_angle, 0.0f, 90.0f, "%.0f deg");
+        advanced_tooltip(_u8L("Maximum angle between neighboring faces that the bucket fill may cross."));
+    } else if (m_tool_type == ToolType::SMART_FILL) {
+        preview_changed |= ImGui::SliderFloat(_u8L("Smart fill angle").c_str(), &m_smart_fill_angle, 0.0f, 90.0f, "%.0f deg");
+        advanced_tooltip(_u8L("Maximum angle between neighboring faces shown by the hover preview and selected on click."));
+    }
+
+    if (selected_volume_for_ui != nullptr && has_bump_mask(selected_volume_for_ui))
+        ImGui::TextUnformatted(_u8L("Mask active").c_str());
+    else if (selected_volume_for_ui != nullptr && has_stored_source_mask(*selected_volume_for_ui))
+        ImGui::TextUnformatted(_u8L("Stored source mask will be reused on Apply").c_str());
+    else if (selected_volume_for_ui != nullptr && has_current_painter_mask(*selected_volume_for_ui))
+        ImGui::TextUnformatted(_u8L("Remove Bump Mesh before changing the source mask.").c_str());
+    else
+        ImGui::TextUnformatted(_u8L("No Bump Mesh mask painted").c_str());
+
+    if (ImGui::Button(_u8L("Clear mask").c_str())) {
+        clear_bump_mask();
+        preview_changed = true;
+    }
+    advanced_tooltip(_u8L("Removes Bump Mesh include and exclude face marks from the selected volume."));
+
     if (ImGui::CollapsingHeader(_u8L("Advanced").c_str())) {
         preview_changed |= ImGui::Checkbox(_u8L("Symmetric (grey 0.5 = neutral)").c_str(), &m_symmetric);
         advanced_tooltip(_u8L("Treats middle grey as neutral. Darker pixels move inward, brighter pixels move outward."));
@@ -1005,6 +1383,8 @@ void GLGizmoBumpMesh::on_render_input_window(float, float, float)
         advanced_tooltip(_u8L("Smooths the normals used for blending projections. Higher values can make transitions cleaner but may soften crisp details."));
         preview_changed |= ImGui::SliderInt(_u8L("Max triangles (0 = off)").c_str(), &m_target_triangles, 0, 2000000);
         advanced_tooltip(_u8L("Simplifies the result after displacement to stay below this triangle count. 0 keeps the full generated detail."));
+        if (m_target_triangles > 0 && m_auto_color_preview && m_auto_color_to_extruders && selected_volume_for_ui != nullptr && has_bump_mask(selected_volume_for_ui))
+            ImGui::TextColored(ImVec4(1.0f, 0.62f, 0.22f, 1.0f), "%s", _u8L("Auto color with a painted mask keeps full detail to preserve face mapping.").c_str());
     }
 
     if (preview_changed) {

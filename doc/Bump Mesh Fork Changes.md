@@ -24,6 +24,9 @@ Implemented areas:
 * Apply to selected volume or duplicate copy.
 * Remove/restores the original mesh for the current session.
 * Side selection for +X, -X, +Y, -Y, +Z, -Z.
+* Direct Surface Mask painting for Bump Mesh include/exclude regions.
+* Brush, Bucket, and Smart fill selection tools for Bump Mesh masks.
+* Mask propagation by original face ID through adaptive subdivision.
 * Print-safe preset.
 * Advanced controls for height inversion, overhang protection, seams, offsets, rotation, angle limits, falloff, normal smoothing, and triangle cap.
 * Auto-color preview.
@@ -34,7 +37,8 @@ Implemented areas:
 Local validation used while preparing this branch:
 
 ```powershell
-cmake --build build-app --config RelWithDebInfo --target PrusaSlicer_app_gui --parallel 1
+cmake --build build-app --config RelWithDebInfo --target PrusaSlicer --parallel 4
+cmake --build build-app --config RelWithDebInfo --target libslic3r_tests --parallel 4
 build-app\tests\libslic3r\RelWithDebInfo\libslic3r_tests.exe "[BumpMesh]"
 build-app\src\RelWithDebInfo\prusa-slicer.exe --help
 ```

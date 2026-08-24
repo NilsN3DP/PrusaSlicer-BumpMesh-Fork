@@ -11,6 +11,7 @@ The implementation is based on the geometry ideas from [BumpMesh by CNC Kitchen]
 * Adaptively subdivides the selected mesh before displacement.
 * Displaces vertices along smoothed surface normals.
 * Can limit the effect to selected model sides.
+* Can include or exclude individual surface regions with Brush, Bucket, and Smart fill painting.
 * Can preview displaced geometry before applying.
 * Can split dark/light or depth regions into PrusaSlicer extruder painting.
 * Can restore the original mesh during the same editing session.
@@ -23,8 +24,9 @@ The implementation is based on the geometry ideas from [BumpMesh by CNC Kitchen]
 4. Pick a projection mode.
 5. Adjust **Amplitude**, **Scale**, and **Detail**.
 6. Enable or disable the target sides under **Sides**.
-7. Use **Live geometry preview** to inspect the displaced shape.
-8. Click **Apply** to bake the texture into the selected volume.
+7. Optionally use **Surface mask** to paint faces that should be included or excluded.
+8. Use **Live geometry preview** to inspect the displaced shape.
+9. Click **Apply** to bake the texture into the selected volume.
 
 Use **Remove** to restore the original selected volume if Bump Mesh was applied during the current session.
 
@@ -63,6 +65,22 @@ The **Sides** section lets you choose where displacement is allowed:
 
 Disabled sides stay pinned so the mesh remains watertight at boundaries where possible. Use **Boundary falloff** in Advanced settings to soften transitions between enabled and disabled sides.
 
+## Surface Mask
+
+Surface Mask is Bump Mesh's own face selection layer. It does not read existing PrusaSlicer color painting, support painting, seam painting, or extruder painting as an input mask.
+
+Use it when side selection is too broad:
+
+* **Include faces** paints blue regions that are allowed to receive Bump Mesh. If at least one include region is painted, only included faces are displaced.
+* **Exclude faces** paints orange regions that stay flat. Exclude always wins over include.
+* **Brush** paints the faces under the cursor.
+* **Bucket** fills connected faces with similar surface direction.
+* **Smart fill** previews the connected region while hovering and applies it on click.
+
+Left mouse paints the selected mode. Right mouse paints the opposite mode. Hold Shift to erase painted Bump Mesh mask faces.
+
+When you click **Apply**, the mask is mapped through adaptive subdivision by original face ID, so the selected source regions remain the authority even after the mesh has been subdivided and displaced. Use **Clear mask** to remove Bump Mesh include/exclude marks from the selected volume.
+
 ## Auto Color
 
 Auto color is optional and is intended for multi-material or multi-color printing.
@@ -75,6 +93,8 @@ Enable **Auto color preview** to see the split on the model. Then choose:
 Enable **Live assign to extruders** to write the preview zones as real PrusaSlicer multi-material painting while you adjust the settings. The assignment is also written again after **Apply**.
 
 If the project contains virtual extruders, Bump Mesh can use them in the same auto-color extruder fields as physical extruders.
+
+Auto color is an output step. It may write generated texture/depth regions into PrusaSlicer's multi-material painting, but Bump Mesh surface masking remains independent from pre-existing model painting.
 
 ## Advanced Settings
 

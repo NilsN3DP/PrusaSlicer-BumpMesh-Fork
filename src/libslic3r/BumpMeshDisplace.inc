@@ -214,6 +214,7 @@ Soup applyDisplacement(const Soup &geo, const Texture &img, const Settings &sett
     Soup out;
     out.pos.resize(count * 3);
     out.nrm.resize(count * 3);
+    out.face_id = geo.face_id;
     for (size_t i = 0; i < count; i++) {
         V3 pos{geo.pos[i * 3], geo.pos[i * 3 + 1], geo.pos[i * 3 + 2]};
         uint32_t vid = vertexId[i];

@@ -1554,6 +1554,20 @@ int TriangleSelector::num_facets(TriangleStateType state) const {
     return cnt;
 }
 
+std::vector<uint8_t> TriangleSelector::source_triangle_mask(TriangleStateType state, size_t source_triangle_count) const
+{
+    std::vector<uint8_t> mask(source_triangle_count, 0);
+    for (const Triangle &tr : m_triangles) {
+        if (!tr.valid() || tr.is_split() || tr.get_state() != state)
+            continue;
+        if (tr.source_triangle >= 0 && size_t(tr.source_triangle) < mask.size())
+            mask[size_t(tr.source_triangle)] = 1;
+    }
+    if (std::none_of(mask.begin(), mask.end(), [](uint8_t v) { return v != 0; }))
+        mask.clear();
+    return mask;
+}
+
 template<AdditionalMeshInfo facet_info>
 typename IndexedTriangleSetType<facet_info>::type TriangleSelector::get_facets(const std::function<bool(const Triangle &)> &facet_filter) const {
     using IndexedTriangleSetType = typename IndexedTriangleSetType<facet_info>::type;

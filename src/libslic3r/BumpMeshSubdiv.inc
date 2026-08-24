@@ -103,9 +103,16 @@ uint32_t getMidpoint(VertStore &verts, PointMap &cache, PointMap &posCanonMap, u
     return (uint32_t)idx;
 }
 
-struct PassResult { std::vector<uint32_t> newIndices; bool changed = false; bool capped = false; };
+struct PassResult {
+    std::vector<uint32_t> newIndices;
+    std::vector<uint32_t> newFaceIds;
+    bool changed = false;
+    bool capped = false;
+};
 
-PassResult subdividePass(VertStore &verts, const std::vector<uint32_t> &indices, double maxEdge, PointMap &posCanonMap) {
+PassResult subdividePass(VertStore &verts, const std::vector<uint32_t> &indices,
+                         const std::vector<uint32_t> &faceIds, double maxEdge,
+                         PointMap &posCanonMap) {
     double maxSq = maxEdge * maxEdge;
     PointMap midCache(1, 1u << 16), splitEdges(1, 1u << 16);
     auto markEdge = [&](uint32_t a, uint32_t b) { int32_t u = verts.canon[a], v = verts.canon[b]; if (u < v) splitEdges.getOrSet(u, v, 0, 1); else splitEdges.getOrSet(v, u, 0, 1); };
@@ -121,7 +128,7 @@ PassResult subdividePass(VertStore &verts, const std::vector<uint32_t> &indices,
         }
     }
     PassResult out;
-    if (splitEdges.size() == 0) { out.newIndices = indices; return out; }
+    if (splitEdges.size() == 0) { out.newIndices = indices; out.newFaceIds = faceIds; return out; }
 
     size_t predicted = 0;
     for (size_t t = 0; t < indices.size(); t += 3) {
@@ -129,33 +136,39 @@ PassResult subdividePass(VertStore &verts, const std::vector<uint32_t> &indices,
         int n = (isMarked(a, b) ? 1 : 0) + (isMarked(b, c) ? 1 : 0) + (isMarked(c, a) ? 1 : 0);
         predicted += n == 0 ? 1 : n + 1;
     }
-    if (predicted > SAFETY_CAP) { out.newIndices = indices; out.capped = true; return out; }
+    if (predicted > SAFETY_CAP) { out.newIndices = indices; out.newFaceIds = faceIds; out.capped = true; return out; }
 
     std::vector<uint32_t> &ni = out.newIndices;
+    std::vector<uint32_t> &nf = out.newFaceIds;
     ni.reserve(predicted * 3);
-    auto p3 = [&](uint32_t x, uint32_t y, uint32_t z) { ni.push_back(x); ni.push_back(y); ni.push_back(z); };
+    nf.reserve(predicted);
+    auto p3 = [&](uint32_t x, uint32_t y, uint32_t z, uint32_t faceId) {
+        ni.push_back(x); ni.push_back(y); ni.push_back(z);
+        nf.push_back(faceId);
+    };
     for (size_t t = 0; t < indices.size(); t += 3) {
+        const uint32_t faceId = (t / 3) < faceIds.size() ? faceIds[t / 3] : uint32_t(t / 3);
         uint32_t a = indices[t], b = indices[t + 1], c = indices[t + 2];
         bool sAB = isMarked(a, b), sBC = isMarked(b, c), sCA = isMarked(c, a);
         int n = (sAB ? 1 : 0) + (sBC ? 1 : 0) + (sCA ? 1 : 0);
-        if (n == 0) { p3(a, b, c); }
+        if (n == 0) { p3(a, b, c, faceId); }
         else if (n == 3) {
             uint32_t mAB = getMidpoint(verts, midCache, posCanonMap, a, b), mBC = getMidpoint(verts, midCache, posCanonMap, b, c), mCA = getMidpoint(verts, midCache, posCanonMap, c, a);
-            p3(a, mAB, mCA); p3(mAB, b, mBC); p3(mCA, mBC, c); p3(mAB, mBC, mCA);
+            p3(a, mAB, mCA, faceId); p3(mAB, b, mBC, faceId); p3(mCA, mBC, c, faceId); p3(mAB, mBC, mCA, faceId);
         } else if (n == 1) {
-            if (sAB) { uint32_t m = getMidpoint(verts, midCache, posCanonMap, a, b); p3(a, m, c); p3(m, b, c); }
-            else if (sBC) { uint32_t m = getMidpoint(verts, midCache, posCanonMap, b, c); p3(a, b, m); p3(a, m, c); }
-            else { uint32_t m = getMidpoint(verts, midCache, posCanonMap, c, a); p3(a, b, m); p3(m, b, c); }
+            if (sAB) { uint32_t m = getMidpoint(verts, midCache, posCanonMap, a, b); p3(a, m, c, faceId); p3(m, b, c, faceId); }
+            else if (sBC) { uint32_t m = getMidpoint(verts, midCache, posCanonMap, b, c); p3(a, b, m, faceId); p3(a, m, c, faceId); }
+            else { uint32_t m = getMidpoint(verts, midCache, posCanonMap, c, a); p3(a, b, m, faceId); p3(m, b, c, faceId); }
         } else {
             if (!sAB) {
                 uint32_t mBC = getMidpoint(verts, midCache, posCanonMap, b, c), mCA = getMidpoint(verts, midCache, posCanonMap, c, a);
-                p3(a, b, mBC); p3(a, mBC, mCA); p3(c, mCA, mBC);
+                p3(a, b, mBC, faceId); p3(a, mBC, mCA, faceId); p3(c, mCA, mBC, faceId);
             } else if (!sBC) {
                 uint32_t mAB = getMidpoint(verts, midCache, posCanonMap, a, b), mCA = getMidpoint(verts, midCache, posCanonMap, c, a);
-                p3(a, mAB, mCA); p3(mAB, b, c); p3(mAB, c, mCA);
+                p3(a, mAB, mCA, faceId); p3(mAB, b, c, faceId); p3(mAB, c, mCA, faceId);
             } else {
                 uint32_t mAB = getMidpoint(verts, midCache, posCanonMap, a, b), mBC = getMidpoint(verts, midCache, posCanonMap, b, c);
-                p3(b, mBC, mAB); p3(a, mAB, mBC); p3(a, mBC, c);
+                p3(b, mBC, mAB, faceId); p3(a, mAB, mBC, faceId); p3(a, mBC, c, faceId);
             }
         }
     }
@@ -163,10 +176,11 @@ PassResult subdividePass(VertStore &verts, const std::vector<uint32_t> &indices,
     return out;
 }
 
-Soup toNonIndexed(const VertStore &verts, const std::vector<uint32_t> &indices) {
+Soup toNonIndexed(const VertStore &verts, const std::vector<uint32_t> &indices, const std::vector<uint32_t> &faceIds) {
     Soup m;
     size_t tri = indices.size() / 3;
     m.pos.resize(tri * 9); m.nrm.resize(tri * 9);
+    m.face_id = faceIds;
     for (size_t t = 0; t < tri; t++)
         for (int v = 0; v < 3; v++) {
             uint32_t vid = indices[t * 3 + v];
@@ -184,12 +198,19 @@ Soup subdivide(const Soup &in, double maxEdgeLength) {
     std::vector<uint32_t> indices;
     PointMap posCanonMap = toIndexed(in, verts, indices);
     std::vector<uint32_t> cur = indices;
+    std::vector<uint32_t> curFaceIds = in.face_id;
+    if (curFaceIds.size() != cur.size() / 3) {
+        curFaceIds.resize(cur.size() / 3);
+        for (size_t i = 0; i < curFaceIds.size(); ++i)
+            curFaceIds[i] = uint32_t(i);
+    }
     for (int iter = 0; iter < 12; iter++) {
         if (cur.size() / 3 >= SAFETY_CAP) break;
-        PassResult res = subdividePass(verts, cur, maxEdgeLength, posCanonMap);
+        PassResult res = subdividePass(verts, cur, curFaceIds, maxEdgeLength, posCanonMap);
         bool stop = !res.changed || res.capped;
         cur = std::move(res.newIndices);
+        curFaceIds = std::move(res.newFaceIds);
         if (stop) break;
     }
-    return toNonIndexed(verts, cur);
+    return toNonIndexed(verts, cur, curFaceIds);
 }

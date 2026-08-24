@@ -285,6 +285,35 @@ TEST_CASE("Bump mesh direct include mask overrides side checkboxes", "[BumpMesh]
         REQUIRE(v.x() == Catch::Approx(0.8f).margin(1e-5f));
 }
 
+TEST_CASE("Bump mesh direct include mask is the exclusive affected surface", "[BumpMesh]")
+{
+    indexed_triangle_set input = make_bent_two_quad_strip();
+    BumpMesh::Texture texture;
+    texture.width = 1;
+    texture.height = 1;
+    texture.gray = {1.f};
+
+    BumpMesh::Settings settings;
+    settings.amplitude = 1.f;
+    settings.symmetric = false;
+    settings.max_edge_length = 10.f;
+    settings.apply_dir = {false, false, false, false, false, false};
+    settings.include_face_mask = {1, 1, 0, 0};
+
+    indexed_triangle_set output = BumpMesh::bake_displacement(input, texture, settings);
+
+    bool saw_displaced_selected_surface = false;
+    bool saw_untouched_unselected_surface = false;
+    for (const Vec3f &v : output.vertices) {
+        if (v.z() > 0.9f && v.x() < 1.001f)
+            saw_displaced_selected_surface = true;
+        if (v.x() == Catch::Approx(1.f).margin(1e-5f) && v.z() > 0.5f)
+            saw_untouched_unselected_surface = true;
+    }
+    REQUIRE(saw_displaced_selected_surface);
+    REQUIRE(saw_untouched_unselected_surface);
+}
+
 TEST_CASE("Bump mesh bake reports source faces for subdivided output", "[BumpMesh]")
 {
     indexed_triangle_set input = make_xy_quad();

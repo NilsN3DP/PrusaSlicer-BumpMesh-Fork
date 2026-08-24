@@ -1236,49 +1236,6 @@ void GLGizmoBumpMesh::on_render_input_window(float, float, float)
     }
 
     ImGui::Separator();
-    preview_changed |= ImGui::Checkbox(_u8L("Auto color preview").c_str(), &m_auto_color_preview);
-    advanced_tooltip(_u8L("Shows a transparent color overlay on the selected model. This is a preview of how automatic coloring would be split into color steps."));
-    if (m_auto_color_preview) {
-        static constexpr const char *AUTO_COLOR_MODES[] = {"Depth", "Texture dark/light"};
-        const int mode_idx = std::clamp(m_auto_color_mode, 0, int(std::size(AUTO_COLOR_MODES)) - 1);
-        if (ImGui::BeginCombo(_u8L("Color source").c_str(), AUTO_COLOR_MODES[mode_idx])) {
-            for (int i = 0; i < int(std::size(AUTO_COLOR_MODES)); ++i) {
-                const bool selected = i == m_auto_color_mode;
-                if (ImGui::Selectable(AUTO_COLOR_MODES[i], selected)) {
-                    m_auto_color_mode = i;
-                    if (m_auto_color_mode == 1)
-                        m_auto_color_steps = 2;
-                    preview_changed = true;
-                }
-                if (selected)
-                    ImGui::SetItemDefaultFocus();
-            }
-            ImGui::EndCombo();
-        }
-        advanced_tooltip(_u8L("Depth splits by displacement height. Texture dark/light automatically separates dark texture areas, such as mortar lines, from brighter areas."));
-        if (m_auto_color_mode == 1) {
-            preview_changed |= ImGui::SliderFloat(_u8L("Dark cutoff").c_str(), &m_texture_dark_cutoff, 0.02f, 0.60f, "%.2f");
-            advanced_tooltip(_u8L("Texture pixels darker than this value become the dark/mortar extruder. Lower values remove noisy dark speckles inside bright areas."));
-            const int available_extruders = wxGetApp().extruders_edited_cnt() + wxGetApp().virtual_extruders_cnt();
-            if (available_extruders > 1) {
-                preview_changed |= extruder_combo(_u8L("Dark areas").c_str(), m_dark_extruder_idx, available_extruders);
-                advanced_tooltip(_u8L("Extruder used for dark texture areas, for example brick mortar lines."));
-                preview_changed |= extruder_combo(_u8L("Light areas").c_str(), m_light_extruder_idx, available_extruders);
-                advanced_tooltip(_u8L("Extruder used for bright texture areas, for example brick faces."));
-            }
-        }
-        preview_changed |= ImGui::SliderInt(_u8L("Color steps").c_str(), &m_auto_color_steps, 2, 8);
-        advanced_tooltip(_u8L("Number of color zones shown on the model. More steps preserve more texture variation; fewer steps are easier to print with few colors."));
-        preview_changed |= ImGui::Checkbox(_u8L("Live assign to extruders").c_str(), &m_auto_color_to_extruders);
-        advanced_tooltip(_u8L("Writes the preview color zones as real multimaterial painting while you adjust the controls, and writes them again after Apply."));
-        const int available_extruders = wxGetApp().extruders_edited_cnt() + wxGetApp().virtual_extruders_cnt();
-        if (available_extruders <= 1)
-            ImGui::TextUnformatted(_u8L("Requires a printer profile with at least 2 extruders.").c_str());
-        else if (m_auto_color_steps > available_extruders)
-            ImGui::Text("%s %d", _u8L("Limited by available extruders:").c_str(), available_extruders);
-    }
-
-    ImGui::Separator();
     ImGui::TextUnformatted(_u8L("Sides").c_str());
     preview_changed |= ImGui::Checkbox(_u8L("Top (+Z)").c_str(), &m_apply_dir[BumpMesh::DIR_PZ]);
     ImGui::SameLine();
@@ -1293,8 +1250,8 @@ void GLGizmoBumpMesh::on_render_input_window(float, float, float)
 
     ImGui::Separator();
     ImGui::TextUnformatted(_u8L("Surface selection").c_str());
-    ImGui::TextUnformatted(_u8L("Pick faces for Bump Mesh only. This does not use existing color or extruder painting.").c_str());
-    ImGui::TextUnformatted(_u8L("Left mouse paints the selected mode, right mouse paints the opposite mode. Hold Shift to erase.").c_str());
+    ImGui::TextUnformatted(_u8L("Pick faces for Bump Mesh only. Existing color or extruder painting is ignored.").c_str());
+    ImGui::TextUnformatted(_u8L("Left mouse paints the chosen mask. Right mouse paints the opposite mask. Hold Shift to erase.").c_str());
     if (ImGui::RadioButton(_u8L("Only selected faces").c_str(), m_surface_paint_mode == 0)) {
         m_surface_paint_mode = 0;
         preview_changed = true;
@@ -1384,6 +1341,49 @@ void GLGizmoBumpMesh::on_render_input_window(float, float, float)
         preview_changed = true;
     }
     advanced_tooltip(_u8L("Removes Bump Mesh include and exclude face marks from the selected volume."));
+
+    ImGui::Separator();
+    preview_changed |= ImGui::Checkbox(_u8L("Auto color preview").c_str(), &m_auto_color_preview);
+    advanced_tooltip(_u8L("Shows the color split Bump Mesh would create on the currently affected faces. It does not read existing model painting."));
+    if (m_auto_color_preview) {
+        static constexpr const char *AUTO_COLOR_MODES[] = {"Depth", "Texture dark/light"};
+        const int mode_idx = std::clamp(m_auto_color_mode, 0, int(std::size(AUTO_COLOR_MODES)) - 1);
+        if (ImGui::BeginCombo(_u8L("Color source").c_str(), AUTO_COLOR_MODES[mode_idx])) {
+            for (int i = 0; i < int(std::size(AUTO_COLOR_MODES)); ++i) {
+                const bool selected = i == m_auto_color_mode;
+                if (ImGui::Selectable(AUTO_COLOR_MODES[i], selected)) {
+                    m_auto_color_mode = i;
+                    if (m_auto_color_mode == 1)
+                        m_auto_color_steps = 2;
+                    preview_changed = true;
+                }
+                if (selected)
+                    ImGui::SetItemDefaultFocus();
+            }
+            ImGui::EndCombo();
+        }
+        advanced_tooltip(_u8L("Depth splits by displacement height. Texture dark/light separates dark texture pixels, such as mortar lines, from brighter areas."));
+        if (m_auto_color_mode == 1) {
+            preview_changed |= ImGui::SliderFloat(_u8L("Dark cutoff").c_str(), &m_texture_dark_cutoff, 0.02f, 0.60f, "%.2f");
+            advanced_tooltip(_u8L("Texture pixels darker than this value become the dark/mortar extruder. Lower values remove noisy dark speckles inside bright areas."));
+            const int available_extruders = wxGetApp().extruders_edited_cnt() + wxGetApp().virtual_extruders_cnt();
+            if (available_extruders > 1) {
+                preview_changed |= extruder_combo(_u8L("Dark areas").c_str(), m_dark_extruder_idx, available_extruders);
+                advanced_tooltip(_u8L("Extruder used for dark texture areas, for example brick mortar lines."));
+                preview_changed |= extruder_combo(_u8L("Light areas").c_str(), m_light_extruder_idx, available_extruders);
+                advanced_tooltip(_u8L("Extruder used for bright texture areas, for example brick faces."));
+            }
+        }
+        preview_changed |= ImGui::SliderInt(_u8L("Color steps").c_str(), &m_auto_color_steps, 2, 8);
+        advanced_tooltip(_u8L("Number of generated color zones. More steps preserve more texture variation; fewer steps are easier to print with few colors."));
+        preview_changed |= ImGui::Checkbox(_u8L("Assign preview to extruders").c_str(), &m_auto_color_to_extruders);
+        advanced_tooltip(_u8L("Writes the shown Bump Mesh color split as real multimaterial painting while you adjust controls and after Apply. Leave off for preview only."));
+        const int available_extruders = wxGetApp().extruders_edited_cnt() + wxGetApp().virtual_extruders_cnt();
+        if (available_extruders <= 1)
+            ImGui::TextUnformatted(_u8L("Requires a printer profile with at least 2 extruders.").c_str());
+        else if (m_auto_color_steps > available_extruders)
+            ImGui::Text("%s %d", _u8L("Limited by available extruders:").c_str(), available_extruders);
+    }
 
     if (ImGui::CollapsingHeader(_u8L("Advanced").c_str())) {
         preview_changed |= ImGui::Checkbox(_u8L("Symmetric (grey 0.5 = neutral)").c_str(), &m_symmetric);

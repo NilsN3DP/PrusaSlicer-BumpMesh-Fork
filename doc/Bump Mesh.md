@@ -92,7 +92,7 @@ Enable **Auto color preview** to see the split on the model. Then choose:
 * **Depth** to split colors by displacement height.
 * **Texture dark/light** to split colors by the original texture brightness. This is useful for brick textures: dark mortar lines can use one extruder and bright brick faces another.
 
-Enable **Live assign to extruders** to write the preview zones as real PrusaSlicer multi-material painting while you adjust the settings. The assignment is also written again after **Apply**.
+Enable **Assign preview to extruders** only when you want to write the shown Bump Mesh color split as real PrusaSlicer multi-material painting. Leave it disabled for preview-only coloring.
 
 If the project contains virtual extruders, Bump Mesh can use them in the same auto-color extruder fields as physical extruders.
 

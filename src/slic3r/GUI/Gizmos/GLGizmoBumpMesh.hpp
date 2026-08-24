@@ -90,7 +90,7 @@ private:
 
     // Auto color preview
     bool  m_auto_color_preview = false;
-    bool  m_auto_color_to_extruders = true;
+    bool  m_auto_color_to_extruders = false;
     int   m_auto_color_mode    = 0; // 0 = depth, 1 = texture
     int   m_auto_color_steps   = 4;
     float m_texture_dark_cutoff = 0.22f;

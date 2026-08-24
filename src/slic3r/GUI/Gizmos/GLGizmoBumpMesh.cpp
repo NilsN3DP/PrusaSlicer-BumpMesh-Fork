@@ -94,6 +94,13 @@ static constexpr MappingModeEntry MAPPING_MODES[] = {
     {"Planar YZ", BumpMesh::MappingMode::PlanarYZ},
 };
 
+struct FalloffCurveEntry { const char *label; BumpMesh::FalloffCurve curve; };
+static constexpr FalloffCurveEntry FALLOFF_CURVES[] = {
+    {"Linear", BumpMesh::FalloffCurve::Linear},
+    {"S-curve", BumpMesh::FalloffCurve::SCurve},
+    {"Ease-in", BumpMesh::FalloffCurve::EaseIn},
+};
+
 struct BumpPreset
 {
     const char *label;
@@ -603,6 +610,7 @@ BumpMesh::Settings GLGizmoBumpMesh::build_settings(const ModelVolume *volume, co
     s.top_angle_limit = m_top_angle;
     s.bottom_angle_limit = m_bottom_angle;
     s.boundary_falloff = m_falloff;
+    s.falloff_curve = FALLOFF_CURVES[std::clamp(m_falloff_curve, 0, int(std::size(FALLOFF_CURVES)) - 1)].curve;
     s.blend_normal_smoothing = m_blend_smooth;
     s.detail = m_detail;
     s.max_edge_length = -1.f;
@@ -1406,6 +1414,20 @@ void GLGizmoBumpMesh::on_render_input_window(float, float, float)
         advanced_tooltip(_u8L("Limits displacement on downward-facing surfaces near the bottom direction. Useful for keeping underside geometry printable."));
         preview_changed |= ImGui::SliderFloat(_u8L("Boundary falloff").c_str(), &m_falloff, 0.0f, 10.0f, "%.2f mm");
         advanced_tooltip(_u8L("Fades displacement near masked or disabled areas over this distance, reducing sharp steps at the boundary."));
+        const int falloff_curve_idx = std::clamp(m_falloff_curve, 0, int(std::size(FALLOFF_CURVES)) - 1);
+        if (ImGui::BeginCombo(_u8L("Mask transition").c_str(), FALLOFF_CURVES[falloff_curve_idx].label)) {
+            for (int i = 0; i < int(std::size(FALLOFF_CURVES)); ++i) {
+                const bool selected = i == m_falloff_curve;
+                if (ImGui::Selectable(FALLOFF_CURVES[i].label, selected)) {
+                    m_falloff_curve = i;
+                    preview_changed = true;
+                }
+                if (selected)
+                    ImGui::SetItemDefaultFocus();
+            }
+            ImGui::EndCombo();
+        }
+        advanced_tooltip(_u8L("Controls how displacement fades at include/exclude boundaries. Ease-in is gentler at the edge, S-curve is balanced, Linear keeps the old straight fade."));
         preview_changed |= ImGui::SliderInt(_u8L("Blend normal smoothing").c_str(), &m_blend_smooth, 0, 64);
         advanced_tooltip(_u8L("Smooths the normals used for blending projections. Higher values can make transitions cleaner but may soften crisp details."));
         preview_changed |= ImGui::SliderInt(_u8L("Max triangles (0 = off)").c_str(), &m_target_triangles, 0, 2000000);

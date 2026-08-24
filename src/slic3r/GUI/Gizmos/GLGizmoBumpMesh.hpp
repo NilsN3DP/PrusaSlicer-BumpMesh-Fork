@@ -116,6 +116,7 @@ private:
     float m_top_angle    = 0.f;
     float m_bottom_angle = 0.f;
     float m_falloff      = 0.f;
+    int   m_falloff_curve = 2; // 0 = linear, 1 = S-curve, 2 = ease-in
     int   m_blend_smooth = 0;
     int   m_target_triangles = 0;
 

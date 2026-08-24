@@ -32,6 +32,12 @@ enum class FaceMaskMode {
     IncludeOnly,
 };
 
+enum class FalloffCurve {
+    Linear,
+    SCurve,
+    EaseIn,
+};
+
 struct Settings {
     MappingMode mapping_mode = MappingMode::Triplanar;
 
@@ -53,6 +59,7 @@ struct Settings {
     float top_angle_limit    = 0.f;  // angle-based masking near +Z (0 = off)
     float bottom_angle_limit = 0.f;  // angle-based masking near -Z (0 = off)
     float boundary_falloff   = 0.f;  // fade displacement near mask boundaries (mm)
+    FalloffCurve falloff_curve = FalloffCurve::EaseIn;
     int   blend_normal_smoothing = 0;// Laplacian smoothing of the blend normal
 
     // Subdivision: refine until every edge <= max_edge_length. If <= 0, it is

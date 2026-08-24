@@ -116,6 +116,12 @@ Auto color is an output step. It may write generated texture/depth regions into 
 
 **Boundary falloff** fades displacement near masked or disabled areas.
 
+**Mask transition** controls the falloff curve at include/exclude boundaries:
+
+* **Ease-in** is the default and starts gently at the mask edge.
+* **S-curve** gives a balanced smooth transition.
+* **Linear** keeps the old straight distance fade.
+
 **Blend normal smoothing** smooths normals used for projection blending.
 
 **Max triangles** decimates the generated mesh after displacement. Set it to `0` to keep all generated detail.

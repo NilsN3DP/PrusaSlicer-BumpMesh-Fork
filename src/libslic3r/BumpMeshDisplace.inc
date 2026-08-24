@@ -108,6 +108,19 @@ Soup applyDisplacement(const Soup &geo, const Texture &img, const Settings &sett
         bnX = cX; bnY = cY; bnZ = cZ;
     }
 
+    auto apply_falloff_curve = [](double t, FalloffCurve curve) {
+        t = std::clamp(t, 0.0, 1.0);
+        switch (curve) {
+        case FalloffCurve::SCurve:
+            return t * t * (3.0 - 2.0 * t);
+        case FalloffCurve::EaseIn:
+            return t * t;
+        case FalloffCurve::Linear:
+        default:
+            return t;
+        }
+    };
+
     // ── Boundary falloff distance field ──
     double boundaryFalloff = settings.boundary_falloff;
     std::vector<double> falloffArr;
@@ -169,7 +182,8 @@ Soup applyDisplacement(const Soup &geo, const Texture &img, const Settings &sett
                                 if (d2 < minD2) minD2 = d2;
                             }
                         }
-                if (minD2 < maxDist2) falloffArr[id] = std::sqrt(minD2) * invFall;
+                if (minD2 < maxDist2)
+                    falloffArr[id] = apply_falloff_curve(std::sqrt(minD2) * invFall, settings.falloff_curve);
             }
         }
     }

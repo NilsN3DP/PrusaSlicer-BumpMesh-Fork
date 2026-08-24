@@ -5,6 +5,8 @@
 #include "libslic3r/TriangleMesh.hpp"
 #include "libslic3r/TriangleSelector.hpp"
 
+#include <cmath>
+
 using namespace Slic3r;
 
 static indexed_triangle_set make_xy_quad()
@@ -59,6 +61,30 @@ static indexed_triangle_set make_bent_two_quad_strip()
     return its;
 }
 
+static float displaced_z_sum_with_falloff(BumpMesh::FalloffCurve curve)
+{
+    indexed_triangle_set input = make_xy_quad();
+    BumpMesh::Texture texture;
+    texture.width = 1;
+    texture.height = 1;
+    texture.gray = {1.f};
+
+    BumpMesh::Settings settings;
+    settings.amplitude = 1.f;
+    settings.symmetric = false;
+    settings.max_edge_length = 0.25f;
+    settings.include_face_mask = {1, 0};
+    settings.boundary_falloff = 1.f;
+    settings.falloff_curve = curve;
+
+    indexed_triangle_set output = BumpMesh::bake_displacement(input, texture, settings);
+
+    float sum = 0.f;
+    for (const Vec3f &v : output.vertices)
+        sum += v.z();
+    return sum;
+}
+
 TEST_CASE("Bump mesh keeps neutral displacement unchanged", "[BumpMesh]")
 {
     indexed_triangle_set input = make_xy_quad();
@@ -80,6 +106,19 @@ TEST_CASE("Bump mesh keeps neutral displacement unchanged", "[BumpMesh]")
         REQUIRE(output.vertices[i].y() == input.vertices[i].y());
         REQUIRE(output.vertices[i].z() == Catch::Approx(input.vertices[i].z()).margin(1e-5f));
     }
+}
+
+TEST_CASE("Bump mesh supports selectable mask falloff curves", "[BumpMesh]")
+{
+    const float linear = displaced_z_sum_with_falloff(BumpMesh::FalloffCurve::Linear);
+    const float s_curve = displaced_z_sum_with_falloff(BumpMesh::FalloffCurve::SCurve);
+    const float ease_in = displaced_z_sum_with_falloff(BumpMesh::FalloffCurve::EaseIn);
+
+    REQUIRE(linear > 0.f);
+    REQUIRE(s_curve > 0.f);
+    REQUIRE(ease_in > 0.f);
+    REQUIRE(ease_in < linear);
+    REQUIRE(std::abs(s_curve - linear) > 1e-3f);
 }
 
 TEST_CASE("Bump mesh displaces an XY plane along smooth normals", "[BumpMesh]")

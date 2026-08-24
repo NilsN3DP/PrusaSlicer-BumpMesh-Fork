@@ -872,7 +872,7 @@ void GLGizmoBumpMesh::on_opening()
 {
     update_from_model_object();
     m_triangle_splitting_enabled = true;
-    m_tool_type = ToolType::BRUSH;
+    m_tool_type = ToolType::SMART_FILL;
     m_cursor_type = TriangleSelector::CursorType::SPHERE;
 }
 
@@ -1250,19 +1250,19 @@ void GLGizmoBumpMesh::on_render_input_window(float, float, float)
 
     ImGui::Separator();
     ImGui::TextUnformatted(_u8L("Surface selection").c_str());
-    ImGui::TextUnformatted(_u8L("Pick faces for Bump Mesh only. Existing color or extruder painting is ignored.").c_str());
-    ImGui::TextUnformatted(_u8L("Left mouse paints the chosen mask. Right mouse paints the opposite mask. Hold Shift to erase.").c_str());
-    if (ImGui::RadioButton(_u8L("Only selected faces").c_str(), m_surface_paint_mode == 0)) {
+    ImGui::TextUnformatted(_u8L("Click model surfaces to include or exclude them for Bump Mesh only.").c_str());
+    ImGui::TextUnformatted(_u8L("Existing color and extruder painting is ignored. Hover shows the affected region.").c_str());
+    if (ImGui::RadioButton(_u8L("Include clicked surfaces").c_str(), m_surface_paint_mode == 0)) {
         m_surface_paint_mode = 0;
         preview_changed = true;
     }
-    advanced_tooltip(_u8L("Marked blue faces are the only faces that receive Bump Mesh. Paint nothing to use the side checkboxes instead."));
+    advanced_tooltip(_u8L("Clicked blue faces are the only faces that receive Bump Mesh. If no blue include surfaces exist, the side checkboxes decide instead."));
     ImGui::SameLine();
-    if (ImGui::RadioButton(_u8L("Exclude selected faces").c_str(), m_surface_paint_mode == 1)) {
+    if (ImGui::RadioButton(_u8L("Exclude clicked surfaces").c_str(), m_surface_paint_mode == 1)) {
         m_surface_paint_mode = 1;
         preview_changed = true;
     }
-    advanced_tooltip(_u8L("Marked orange faces are kept flat. Exclude always wins over include."));
+    advanced_tooltip(_u8L("Clicked orange faces are kept flat. Exclude always wins over include."));
 
     int tool_type = m_tool_type == ToolType::BUCKET_FILL ? 1 :
                     m_tool_type == ToolType::SMART_FILL  ? 2 : 0;
@@ -1276,13 +1276,13 @@ void GLGizmoBumpMesh::on_render_input_window(float, float, float)
         m_tool_type = ToolType::BUCKET_FILL;
         preview_changed = true;
     }
-    advanced_tooltip(_u8L("Fills connected faces with similar direction. The angle controls how far the fill can flow around corners."));
+    advanced_tooltip(_u8L("Immediately fills connected faces with similar direction after a click. The angle controls how far the fill can flow around corners."));
     ImGui::SameLine();
-    if (ImGui::RadioButton(_u8L("Smart fill").c_str(), tool_type == 2)) {
+    if (ImGui::RadioButton(_u8L("Surface click").c_str(), tool_type == 2)) {
         m_tool_type = ToolType::SMART_FILL;
         preview_changed = true;
     }
-    advanced_tooltip(_u8L("Shows the connected fill area while hovering, then applies it on click. Good for selecting full surface regions."));
+    advanced_tooltip(_u8L("Default Bump Mesh picker. Hover previews the connected surface region; click to include or exclude it."));
 
     if (m_tool_type == ToolType::BRUSH) {
         preview_changed |= ImGui::SliderFloat(_u8L("Brush size").c_str(), &m_cursor_radius, get_cursor_radius_min(), get_cursor_radius_max(), "%.1f mm");
@@ -1309,8 +1309,8 @@ void GLGizmoBumpMesh::on_render_input_window(float, float, float)
         preview_changed |= ImGui::SliderFloat(_u8L("Bucket angle").c_str(), &m_bucket_fill_angle, 0.0f, 90.0f, "%.0f deg");
         advanced_tooltip(_u8L("Maximum angle between neighboring faces that the bucket fill may cross."));
     } else if (m_tool_type == ToolType::SMART_FILL) {
-        preview_changed |= ImGui::SliderFloat(_u8L("Smart fill angle").c_str(), &m_smart_fill_angle, 0.0f, 90.0f, "%.0f deg");
-        advanced_tooltip(_u8L("Maximum angle between neighboring faces shown by the hover preview and selected on click."));
+        preview_changed |= ImGui::SliderFloat(_u8L("Surface angle").c_str(), &m_smart_fill_angle, 0.0f, 90.0f, "%.0f deg");
+        advanced_tooltip(_u8L("Maximum angle between neighboring faces shown by the hover preview and selected on click. Lower values stop at sharper edges."));
     }
 
     std::vector<uint8_t> include_mask;

@@ -11,7 +11,7 @@ The implementation is based on the geometry ideas from [BumpMesh by CNC Kitchen]
 * Adaptively subdivides the selected mesh before displacement.
 * Displaces vertices along smoothed surface normals.
 * Can limit the effect to selected model sides.
-* Can include or exclude individual surface regions with Brush, Bucket, and Smart fill painting.
+* Can include or exclude individual surface regions directly inside the Bump Mesh gizmo with Surface click, Bucket, or Brush tools.
 * Can preview displaced geometry before applying.
 * Can split dark/light or depth regions into PrusaSlicer extruder painting.
 * Can restore the original mesh during the same editing session.
@@ -24,7 +24,7 @@ The implementation is based on the geometry ideas from [BumpMesh by CNC Kitchen]
 4. Pick a projection mode.
 5. Adjust **Amplitude**, **Scale**, and **Detail**.
 6. Enable or disable the target sides under **Sides**.
-7. Optionally use **Surface mask** to paint faces that should be included or excluded.
+7. Optionally use **Surface selection** to click model regions that should be included or excluded.
 8. Use **Live geometry preview** to inspect the displaced shape.
 9. Click **Apply** to bake the texture into the selected volume.
 
@@ -71,17 +71,17 @@ Surface Mask is Bump Mesh's own face selection layer. It does not read existing 
 
 Use it when side selection is too broad:
 
-* **Only selected faces** paints blue regions that are allowed to receive Bump Mesh. If at least one include region is painted, the direct face selection becomes authoritative.
-* **Exclude selected faces** paints orange regions that stay flat. Exclude always wins over include.
-* **Brush** paints the faces under the cursor.
-* **Bucket** fills connected faces with similar surface direction.
-* **Smart fill** previews the connected region while hovering and applies it on click.
+* **Include clicked surfaces** marks blue regions that are allowed to receive Bump Mesh. If at least one include region is marked, the direct face selection becomes authoritative.
+* **Exclude clicked surfaces** marks orange regions that stay flat. Exclude always wins over include.
+* **Surface click** is the default picker. It previews the connected region while hovering and applies it on click.
+* **Bucket** immediately fills connected faces with similar surface direction.
+* **Brush** paints the faces under the cursor for small cleanup edits.
 
 Left mouse paints the selected mode. Right mouse paints the opposite mode. Hold Shift to erase painted Bump Mesh mask faces.
 
-When no blue include region exists, the side checkboxes decide the affected area. Once blue include faces are painted, those faces are allowed even if a side checkbox would otherwise be off. Orange exclude faces still stay flat.
+When no blue include region exists, the side checkboxes decide the affected area. Once blue include faces are marked, those faces are allowed even if a side checkbox would otherwise be off. Orange exclude faces still stay flat.
 
-When you click **Apply**, the mask is mapped through adaptive subdivision by original face ID, so the selected source regions remain the authority even after the mesh has been subdivided and displaced. Use **Clear surface selection** to remove Bump Mesh include/exclude marks from the selected volume.
+When you click **Apply**, the mask is mapped through adaptive subdivision by original face ID, so the selected source regions remain the authority even after the mesh has been subdivided and displaced. Existing color or extruder painting is never used as the Bump Mesh mask source. Use **Clear surface selection** to remove Bump Mesh include/exclude marks from the selected volume.
 
 ## Auto Color
 
